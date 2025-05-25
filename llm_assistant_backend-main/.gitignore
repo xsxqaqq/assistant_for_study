@@ -1,0 +1,11 @@
+
+/*
+!/app/
+!/test/
+!/requirements.txt
+!/.gitignore
+!/README.md
+!/assistant.db
+!/run.py
+!/test.txt
+*.pyc
