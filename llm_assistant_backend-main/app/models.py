@@ -34,6 +34,17 @@ class User(Base):
     hashed_password = Column(String)
     is_admin = Column(Boolean, default=False) # 新增管理员字段
 
+# 新增：聊天记录模型
+class ChatHistory(Base):
+    __tablename__ = "chat_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(String, index=True)
+    user_id = Column(Integer, index=True) #  ForeignKey("users.id") 理论上应该加，但为了简化，暂时不加外键约束
+    role = Column(String)  # 'user' or 'assistant'
+    message = Column(String)
+    agent_type = Column(String) # 记录当时使用的agent_type
+
 # 创建数据库表
 def create_tables():
     try:

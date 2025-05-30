@@ -49,6 +49,30 @@ class ChatHistoryRequest(BaseModel):
 
 class ChatHistoryResponse(BaseModel):
     reply: str
+
+# 新增：用于前端展示的单条聊天记录模型
+class ChatMessage(BaseModel):
+    role: str
+    message: str
+    agent_type: Optional[str] = None #  可选，因为用户消息没有agent_type
+
+# 新增：获取聊天历史的响应模型
+class GetChatHistoryResponse(BaseModel):
+    history: List[ChatMessage]
+    conversation_id: str
+    status_code: int = 200
+    message: str = "成功"
+
+# 角色相关模型
+class AgentInfo(BaseModel):
+    id: str
+    name: str
+    description: str
+
+class AgentListResponse(BaseModel):
+    agents: List[AgentInfo]
+    status_code: int = 200
+    message: str = "成功"
     conversation_id: Optional[str] = None
     status_code: int = 200
     message: str = "成功"
