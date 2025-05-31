@@ -18,10 +18,21 @@ const Register = () => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const navigate = useNavigate();
-
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    
+    // 校验用户名长度
+    if (username.length < 8 || username.length > 20) {
+      setError('用户名长度必须在8到20个字符之间');
+      return;
+    }
+    
+    // 校验密码长度
+    if (password.length < 8 || password.length > 20) {
+      setError('密码长度必须在8到20个字符之间');
+      return;
+    }
     
     if (password !== confirmPassword) {
       setError('两次输入的密码不一致');
