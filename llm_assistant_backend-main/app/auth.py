@@ -36,7 +36,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from app.models import User, SessionLocal
-from app.schemas import UserCreate, UserResponse, Token
+from app.schemas import UserCreate, UserResponse, Token, UserUpdate, PasswordUpdate, AdminUserUpdate # 新增导入 AdminUserUpdate
 
 # JWT配置
 SECRET_KEY = "your-secret-key-for-jwt"  # 生产环境应使用安全的密钥
@@ -182,6 +182,28 @@ async def login_for_access_token_oauth2(form_data: OAuth2PasswordRequestForm = D
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
 
+# 新增：更新当前用户信息（例如邮箱）
+@router.put("/users/me/info", response_model=UserResponse, tags=["用户管理"]) # 更改路径以避免与 main.py 中的冲突
+async def update_user_info_endpoint(user_update: UserUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if user_update.email:
+        # 检查邮箱是否已被其他用户使用
+        existing_user = db.query(User).filter(User.email == user_update.email).first()
+        if existing_user and existing_user.id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="邮箱已被注册")
+        current_user.email = user_update.email
+    
+    db.commit()
+    db.refresh(current_user)
+    return current_user
+
+# 新增：修改当前用户密码
+@router.put("/users/me/password", tags=["用户管理"]) # 更改路径以避免与 main.py 中的冲突
+async def update_password_endpoint(password_update: PasswordUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # 移除当前密码验证，直接允许更新密码
+    current_user.hashed_password = get_password_hash(password_update.new_password)
+    db.commit()
+    return {"message": "密码修改成功"}
+
 # 管理员获取所有用户列表
 @router.get("/users/", response_model=list[UserResponse])
 async def read_all_users(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -205,7 +227,7 @@ async def read_user_by_id(user_id: int, db: Session = Depends(get_db), current_u
 
 # 更新用户信息 - 示例，管理员可以更新其他用户信息
 @router.put("/users/{user_id}", response_model=UserResponse)
-async def update_user_info(user_id: int, user_update: UserCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def update_user_info(user_id: int, user_update: AdminUserUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     if not current_user.is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="没有权限操作")
     
@@ -213,13 +235,8 @@ async def update_user_info(user_id: int, user_update: UserCreate, db: Session = 
     if not db_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在")
 
-    # 更新用户信息，但不允许通过此接口修改密码或管理员状态（除非特别设计）
-    db_user.username = user_update.username
-    db_user.email = user_update.email
-    
-    # 如果 UserCreate 包含 password 字段，且希望管理员能重置密码
-    if user_update.password:
-         db_user.hashed_password = get_password_hash(user_update.password)
+    # 管理员只能修改用户的 is_admin 状态
+    db_user.is_admin = user_update.is_admin
 
     db.commit()
     db.refresh(db_user)

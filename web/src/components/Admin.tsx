@@ -18,6 +18,8 @@ import {
   IconButton,
   Box,
   Alert,
+  FormControlLabel,
+  Checkbox,
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
@@ -35,11 +37,11 @@ const Admin = () => {
   const [openDialog, setOpenDialog] = useState(false);
   const [openEditDialog, setOpenEditDialog] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
-  const [error, setError] = useState('');
-  const [formData, setFormData] = useState({
+  const [error, setError] = useState('');  const [formData, setFormData] = useState({
     username: '',
     email: '',
     password: '',
+    is_admin: false,
   });
 
   const fetchUsers = async () => {
@@ -81,17 +83,14 @@ const Admin = () => {
 
       if (!response.ok) {
         throw new Error('创建用户失败');
-      }
-
-      setOpenDialog(false);
-      setFormData({ username: '', email: '', password: '' });
+      }      setOpenDialog(false);
+      setFormData({ username: '', email: '', password: '', is_admin: false });
       fetchUsers();
     } catch (error) {
       console.error('创建用户错误:', error);
       setError('创建用户失败');
     }
   };
-
   const handleUpdateUser = async () => {
     if (!selectedUser) return;
 
@@ -103,7 +102,7 @@ const Admin = () => {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify(formData)
+        body: JSON.stringify({ is_admin: formData.is_admin })
       });
 
       if (!response.ok) {
@@ -112,7 +111,7 @@ const Admin = () => {
 
       setOpenEditDialog(false);
       setSelectedUser(null);
-      setFormData({ username: '', email: '', password: '' });
+      setFormData({ username: '', email: '', password: '', is_admin: false });
       fetchUsers();
     } catch (error) {
       console.error('更新用户错误:', error);
@@ -185,13 +184,13 @@ const Admin = () => {
                   <TableCell>{user.is_admin ? '是' : '否'}</TableCell>
                   <TableCell>
                     <IconButton
-                      color="primary"
-                      onClick={() => {
+                      color="primary"                      onClick={() => {
                         setSelectedUser(user);
                         setFormData({
                           username: user.username,
                           email: user.email,
                           password: '',
+                          is_admin: user.is_admin,
                         });
                         setOpenEditDialog(true);
                       }}
@@ -210,9 +209,7 @@ const Admin = () => {
             </TableBody>
           </Table>
         </TableContainer>
-      </Paper>
-
-      {/* 创建用户对话框 */}
+      </Paper>      {/* 创建用户对话框 */}
       <Dialog open={openDialog} onClose={() => setOpenDialog(false)}>
         <DialogTitle>创建新用户</DialogTitle>
         <DialogContent>
@@ -239,6 +236,15 @@ const Admin = () => {
             value={formData.password}
             onChange={(e) => setFormData({ ...formData, password: e.target.value })}
           />
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={formData.is_admin}
+                onChange={(e) => setFormData({ ...formData, is_admin: e.target.checked })}
+              />
+            }
+            label="设为管理员"
+          />
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOpenDialog(false)}>取消</Button>
@@ -246,35 +252,24 @@ const Admin = () => {
             创建
           </Button>
         </DialogActions>
-      </Dialog>
-
-      {/* 编辑用户对话框 */}
+      </Dialog>      {/* 编辑用户对话框 */}
       <Dialog open={openEditDialog} onClose={() => setOpenEditDialog(false)}>
-        <DialogTitle>编辑用户</DialogTitle>
+        <DialogTitle>编辑用户权限</DialogTitle>
         <DialogContent>
-          <TextField
-            margin="dense"
-            label="用户名"
-            fullWidth
-            value={formData.username}
-            onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-          />
-          <TextField
-            margin="dense"
-            label="邮箱"
-            type="email"
-            fullWidth
-            value={formData.email}
-            onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-          />
-          <TextField
-            margin="dense"
-            label="新密码（留空则不修改）"
-            type="password"
-            fullWidth
-            value={formData.password}
-            onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-          />
+          <Box sx={{ py: 2 }}>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              正在编辑用户: {selectedUser?.username} ({selectedUser?.email})
+            </Typography>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={formData.is_admin}
+                  onChange={(e) => setFormData({ ...formData, is_admin: e.target.checked })}
+                />
+              }
+              label="管理员权限"
+            />
+          </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOpenEditDialog(false)}>取消</Button>

@@ -8,7 +8,7 @@ import uuid
 from dotenv import load_dotenv
 from typing import Dict, List
 
-from app.schemas import ChatRequest, ChatResponse, ChatHistoryRequest, ChatHistoryResponse, AgentListResponse, AgentInfo, GetChatHistoryResponse, ChatMessage # 新增导入
+from app.schemas import ChatRequest, ChatResponse, ChatHistoryRequest, ChatHistoryResponse, AgentListResponse, AgentInfo, GetChatHistoryResponse, ChatMessage, ConversationListResponse, ConversationInfo # 新增导入
 from app.auth import get_current_user, get_db
 from app.models import User, ChatHistory # 新增导入
 
@@ -193,22 +193,74 @@ async def get_chat_history_endpoint(
     
     return GetChatHistoryResponse(history=chat_messages, conversation_id=conversation_id)
 
-@router.get("/conversations/", response_model=List[str]) # 简单返回会话ID列表
+@router.get("/conversations/", response_model=ConversationListResponse)
 async def get_user_conversations(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    获取当前用户的所有对话ID列表
+    获取当前用户的所有会话信息列表
     需要用户认证
     """
-    logger.info(f"用户 {current_user.username} 请求其所有对话列表")
+    logger.info(f"用户 {current_user.username} 请求其所有会话列表")
     
-    conversation_ids = db.query(ChatHistory.conversation_id).filter(
+    # 查询用户的所有会话，获取每个会话的第一条消息作为标题
+    query_result = db.query(ChatHistory.conversation_id, ChatHistory.message)\
+        .filter(ChatHistory.user_id == current_user.id, ChatHistory.role == "user")\
+        .order_by(ChatHistory.conversation_id, ChatHistory.id)\
+        .all()
+    
+    # 按会话ID分组，取每个会话的第一条用户消息作为标题
+    conversations_dict = {}
+    for conversation_id, message in query_result:
+        if conversation_id not in conversations_dict:
+            conversations_dict[conversation_id] = {
+                "id": conversation_id,
+                "title": message[:50] + "..." if len(message) > 50 else message,  # 限制标题长度
+                "created_at": None  # 暂时设置为None，因为模型中没有created_at字段
+            }
+    
+    conversations = [ConversationInfo(**conv_info) for conv_info in conversations_dict.values()]
+    
+    logger.info(f"用户 {current_user.username} 的会话列表: {len(conversations)} 个会话")
+    return ConversationListResponse(conversations=conversations)
+
+@router.delete("/conversations/{conversation_id}", status_code=204)
+async def delete_conversation_endpoint(
+    conversation_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    删除指定 conversation_id 的聊天记录
+    需要用户认证，且只能删除自己的聊天记录
+    """
+    logger.info(f"用户 {current_user.username} 请求删除会话 {conversation_id}")
+
+    # 检查会话是否存在并且属于当前用户
+    records_to_delete = db.query(ChatHistory).filter(
+        ChatHistory.conversation_id == conversation_id,
         ChatHistory.user_id == current_user.id
-    ).distinct().all()
-    
-    return [conv_id for (conv_id,) in conversation_ids]
+    ).all()
+
+    if not records_to_delete:
+        # 如果没有找到记录，或者记录不属于当前用户，可以返回404或403
+        # 为了简单起见，如果记录为空，直接返回成功，因为结果都是该会话不再存在
+        logger.info(f"未找到会话 {conversation_id} 或该会话不属于用户 {current_user.username}")
+        # raise HTTPException(status_code=404, detail="未找到要删除的会话记录，或您没有权限删除此会话")
+        return # 返回 204 No Content
+
+    try:
+        for record in records_to_delete:
+            db.delete(record)
+        db.commit()
+        logger.info(f"用户 {current_user.username} 成功删除了会话 {conversation_id} 的所有记录")
+        return # FastAPI 会自动处理 status_code=204 的响应体
+    except Exception as e:
+        db.rollback()
+        logger.error(f"删除会话 {conversation_id} 记录时发生错误: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"删除会话记录时发生内部错误: {str(e)}")
+
 
 @router.get("/agents", response_model=AgentListResponse)
 async def get_agents_endpoint():

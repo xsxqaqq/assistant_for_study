@@ -5,6 +5,7 @@ import Register from './components/Register';
 import Chat from './components/Chat';
 import ResetPassword from './components/ResetPassword';
 import Admin from './components/Admin';
+import Profile from './components/Profile';
 import './App.css';
 
 const theme = createTheme({
@@ -25,6 +26,7 @@ const App = () => {
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/chat" element={<Chat />} />
           <Route path="/admin" element={<Admin />} />
+          <Route path="/profile" element={<Profile />} />
           <Route path="/" element={<Navigate to="/login" />} />
         </Routes>
       </Router>

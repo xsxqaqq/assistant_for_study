@@ -12,11 +12,24 @@ class UserCreate(UserBase):
 
 class UserResponse(UserBase):
     id: int
-    is_admin: bool 
-    
+    is_admin: bool
+    # email: EmailStr # email 字段已在 UserBase 中，会自动继承
+
     model_config = {
         "from_attributes": True
     }
+
+# 新增：用于更新用户基本信息的模型
+class UserUpdate(BaseModel):
+    email: Optional[EmailStr] = None
+
+# 管理员专用：用于修改用户管理员状态的模型
+class AdminUserUpdate(BaseModel):
+    is_admin: bool
+
+# 新增：用于修改密码的模型
+class PasswordUpdate(BaseModel):
+    new_password: str
 
 # 错误响应模型
 class ErrorResponse(BaseModel):
@@ -80,5 +93,16 @@ class AgentListResponse(BaseModel):
 # 摘要相关模型
 class SummaryResponse(BaseModel):
     summary: str
+    status_code: int = 200
+    message: str = "成功"
+
+# 对话信息模型
+class ConversationInfo(BaseModel):
+    id: str
+    title: str  # 对话的第一条消息
+    created_at: Optional[str] = None
+
+class ConversationListResponse(BaseModel):
+    conversations: List[ConversationInfo]
     status_code: int = 200
     message: str = "成功"

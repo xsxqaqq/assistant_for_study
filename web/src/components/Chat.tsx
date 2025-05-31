@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { 
   Box, 
   TextField, 
@@ -11,7 +12,6 @@ import {
   Select,
   MenuItem,
   FormControl,
-  InputLabel,
   IconButton,
   Divider,
   Avatar,
@@ -25,16 +25,15 @@ import {
   Drawer,
   useTheme,
   useMediaQuery,
-  Container,
 } from '@mui/material'
 import SendIcon from '@mui/icons-material/Send'
 import DeleteIcon from '@mui/icons-material/Delete'
 import HistoryIcon from '@mui/icons-material/History'
-import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward'
 import UploadFileIcon from '@mui/icons-material/UploadFile'
 import SummarizeIcon from '@mui/icons-material/Summarize'
 import MenuIcon from '@mui/icons-material/Menu'
 import CloseIcon from '@mui/icons-material/Close'
+import AddIcon from '@mui/icons-material/Add'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -47,39 +46,32 @@ interface Agent {
   id: string
   name: string
   description: string
-  avatar: string
 }
 
-const agents: Agent[] = [
-  {
-    id: 'default',
-    name: '默认助教',
-    description: '友好、专业的教学助手',
-    avatar: '👨‍🏫'
-  },
-  {
-    id: 'strict',
-    name: '严格助教',
-    description: '严谨、要求严格的导师',
-    avatar: '👨‍⚖️'
-  },
-  {
-    id: 'friendly',
-    name: '友好助教',
-    description: '轻松、幽默的学习伙伴',
-    avatar: '😊'
-  }
-]
+interface BackendChatMessage {
+  role: string
+  message: string
+  agent_type?: string
+  timestamp?: number
+  created_at?: string
+}
 
-const MAX_HISTORY_LENGTH = 10 // 最多显示最近10轮对话
+interface ConversationInfo {
+  id: string
+  title: string
+  created_at?: string
+}
 
 const Chat = () => {
+  const navigate = useNavigate()
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [dynamicAgents, setDynamicAgents] = useState<Agent[]>([])
   const [selectedAgent, setSelectedAgent] = useState<string>('default')
   const [showHistory, setShowHistory] = useState(false)
-  const [historyMessages, setHistoryMessages] = useState<Message[]>([])
+  const [conversationList, setConversationList] = useState<ConversationInfo[]>([]) // Updated state for conversation list
+  const [currentUser, setCurrentUser] = useState<{ username: string; email: string } | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const currentConversationId = useRef<string>('')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -89,6 +81,86 @@ const Chat = () => {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const theme = useTheme()
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'))
+
+  // 格式化文件大小显示
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) {
+      return `${bytes} B`
+    } else if (bytes < 1024 * 1024) {
+      return `${(bytes / 1024).toFixed(2)} KB`
+    } else {
+      return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
+    }
+  }
+
+  useEffect(() => {
+    const fetchAgentsAndConversations = async () => {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        // Optionally, redirect to login or show an error
+        console.error("No token found, user might not be logged in.");
+        // Fallback for agents if not logged in, or if API fails
+        setDynamicAgents([{ id: 'default', name: '默认助手', description: '请先登录以获取完整功能' }]);
+        setSelectedAgent('default');
+        return;
+      }
+
+      setIsLoading(true);
+      try {
+        // Fetch Agents
+        const agentsResponse = await fetch('/api/chat/agents', {
+           headers: { 'Authorization': `Bearer ${token}` }, // Assuming /agents might also need auth or for consistency
+        });
+        if (!agentsResponse.ok) {
+          throw new Error(`HTTP error! status: ${agentsResponse.status} for agents`);
+        }
+        const agentsData = await agentsResponse.json();
+        if (agentsData && Array.isArray(agentsData.agents)) {
+          setDynamicAgents(agentsData.agents);
+          if (agentsData.agents.length > 0) {
+            const defaultAgentInList = agentsData.agents.find((agent: Agent) => agent.id === 'default');
+            if (defaultAgentInList) {
+              setSelectedAgent('default');
+            } else {
+              setSelectedAgent(agentsData.agents[0].id);
+            }
+          } else {
+            setDynamicAgents([{ id: 'default', name: '默认助手', description: '无可用助教' }]);
+            setSelectedAgent('default');
+          }
+        } else {
+          console.error("Fetched agents data is not in expected format:", agentsData);
+          setDynamicAgents([{ id: 'default', name: '默认助手', description: '数据格式错误' }]);
+          setSelectedAgent('default');
+        }        // Fetch Conversations
+        const convResponse = await fetch('/api/chat/conversations/', {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (!convResponse.ok) {
+          throw new Error(`HTTP error! status: ${convResponse.status} for conversations`);
+        }        const convData = await convResponse.json();
+        setConversationList(convData.conversations || []);
+
+        // Fetch Current User Info
+        const userResponse = await fetch('/api/auth/user', {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (userResponse.ok) {
+          const userData = await userResponse.json();
+          setCurrentUser(userData);
+        }
+
+      } catch (error) {
+        console.error("Failed to fetch initial data:", error);        // Provide fallback for agents if not already set due to auth error
+        setDynamicAgents([{ id: 'default', name: '默认助手', description: '加载助教列表失败' }]);
+        setSelectedAgent('default');        // Optionally set conversationList to empty or show error
+        setConversationList([]);
+        alert(error instanceof Error ? error.message : '加载初始数据失败');
+      } finally {
+        setIsLoading(false);
+      }
+    };    fetchAgentsAndConversations();
+  }, []);  // Empty dependency array - only run once on mount
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'auto' })
@@ -154,14 +226,6 @@ const Chat = () => {
 
       setMessages(prev => [...prev, assistantMessage])
       
-      // 更新历史记录
-      setHistoryMessages(prev => {
-        const newHistory = [...prev, userMessage, assistantMessage];
-        if (newHistory.length > MAX_HISTORY_LENGTH * 2) { // 每轮对话包含用户和助手两条消息
-          return newHistory.slice(-MAX_HISTORY_LENGTH * 2);
-        }
-        return newHistory;
-      });
     } catch (error) {
       console.error('发送消息错误:', error);
       alert(error instanceof Error ? error.message : '发送消息失败，请稍后重试');
@@ -176,40 +240,135 @@ const Chat = () => {
       handleSend()
     }
   }
-
   const clearChat = () => {
     setMessages([])
     currentConversationId.current = ''
+  }
+
+  const createNewConversation = () => {
+    setMessages([])
+    currentConversationId.current = ''
+    setShowHistory(false) // 关闭历史记录抽屉
   }
 
   const toggleHistory = () => {
     setShowHistory(!showHistory)
   }
 
-  const loadHistoryMessage = (message: Message) => {
-    setInput(message.content)
-  }
+  const handleLoadConversation = async (conversationId: string) => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      alert('请登录后再试');
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const response = await fetch(`/api/chat/history/${conversationId}`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || '加载聊天记录失败');
+      }
+      const data = await response.json(); // Expected: { history: BackendChatMessage[], conversation_id: string }
+        // Backend ChatMessage: { role: string, message: string, agent_type?: string }
+      // Frontend Message: { role: 'user' | 'assistant', content: string, timestamp: number, conversationId?: string }
+      const loadedMessages: Message[] = data.history.map((msg: BackendChatMessage, index: number) => ({
+        role: msg.role as 'user' | 'assistant',
+        content: msg.message,
+        // Backend's ChatHistory model has created_at, if schema.ChatMessage includes it, use msg.created_at
+        // For now, using placeholder if actual timestamp isn't in msg object
+        timestamp: msg.timestamp || (Date.now() - (data.history.length - index) * 10000), // Placeholder, prefer real timestamp
+        conversationId: data.conversation_id,
+      }));
 
-  const currentAgent = agents.find(agent => agent.id === selectedAgent)
+      setMessages(loadedMessages);
+      currentConversationId.current = data.conversation_id;
+      setShowHistory(false); // Close history drawer
+    } catch (error) {
+      console.error('加载会话错误:', error);
+      alert(error instanceof Error ? error.message : '加载会话失败');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
+  const handleDeleteConversation = async (conversationId: string) => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      alert('请登录后再试');
+      return;
+    }
+
+    // 找到要删除的对话信息以显示更友好的确认对话框
+    const conversationToDelete = conversationList.find(conv => conv.id === conversationId);
+    const displayTitle = conversationToDelete ? conversationToDelete.title : `会话 #${conversationId.substring(0, 8)}...`;
+    
+    if (window.confirm(`确定要删除对话 "${displayTitle}" 吗？此操作不可撤销。`)) {
+      setIsLoading(true); 
+      try {
+        const response = await fetch(`/api/chat/conversations/${conversationId}`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+
+        if (!response.ok) {
+          let errorDetail = '删除会话失败';
+          try {
+            const errorData = await response.json();
+            errorDetail = errorData.detail || errorDetail;
+          } catch {
+            // Ignore if response is not JSON or empty
+          }
+          throw new Error(errorDetail);
+        }
+
+        setConversationList(prevList => prevList.filter(conv => conv.id !== conversationId));
+        if (currentConversationId.current === conversationId) {
+          clearChat(); 
+        }
+        // alert('会话已成功删除。'); // It's better to not show an alert if the UI updates clearly
+      } catch (error) {
+        console.error('删除会话错误:', error);
+        alert(error instanceof Error ? error.message : '删除会话失败，请稍后重试');
+      } finally {
+        setIsLoading(false);
+      }
+    }
+  };
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
-    if (file && (file.type === 'text/plain' || file.type === 'application/pdf')) {
-      setSelectedFile(file)
-    } else {
-      alert('请上传txt或pdf文件')
+    if (file) {
+      // 检查文件类型
+      if (file.type === 'text/plain' || file.type === 'application/pdf') {
+        // 检查文件大小 (限制为10MB)
+        const maxSize = 10 * 1024 * 1024; // 10MB
+        if (file.size > maxSize) {
+          alert('文件大小不能超过10MB，请选择较小的文件')
+          return
+        }
+        setSelectedFile(file)
+      } else {
+        alert('请上传txt或pdf文件')
+      }
     }
   }
-
   const handleSummarize = async () => {
     if (!selectedFile) return
 
     setIsSummarizing(true)
+    setSummary([]) // 清空之前的摘要
     try {
       const formData = new FormData()
       formData.append('file', selectedFile)
 
       const token = localStorage.getItem('token')
+      if (!token) {
+        throw new Error('请先登录后再试')
+      }
+
       const response = await fetch('/api/summary/', {
         method: 'POST',
         headers: {
@@ -219,14 +378,19 @@ const Chat = () => {
       })
 
       if (!response.ok) {
-        throw new Error('摘要生成失败')
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.detail || `服务器错误 (${response.status})`)
       }
 
       const data = await response.json()
-      setSummary(data.summary.split('\n').filter(Boolean))
+      if (data.summary) {
+        setSummary(data.summary.split('\n').filter((line: string) => line.trim() !== ''))
+      } else {
+        throw new Error('服务器返回的摘要数据格式错误')
+      }
     } catch (error) {
       console.error('摘要生成错误:', error)
-      alert('摘要生成失败，请稍后重试')
+      alert(error instanceof Error ? error.message : '摘要生成失败，请稍后重试')
     } finally {
       setIsSummarizing(false)
     }
@@ -237,48 +401,104 @@ const Chat = () => {
       {/* 顶部导航栏 */}
       <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
         <Toolbar>
-          <IconButton
-            color="inherit"
-            edge="start"
-            onClick={() => setDrawerOpen(!drawerOpen)}
-            sx={{ mr: 2, display: { sm: 'none' } }}
+          {/* Left Section: Contains hamburger on xs, provides space on sm+ */}
+          <Box sx={{ flex: 1, display: 'flex', justifyContent: 'flex-start', alignItems: 'center' }}>
+            <IconButton
+              color="inherit"
+              edge="start"
+              onClick={() => setDrawerOpen(!drawerOpen)}
+              sx={{ 
+                display: { xs: 'inline-flex', sm: 'none' } // Original: mr: 2, display: { sm: 'none' }
+              }}
+            >
+              <MenuIcon />
+            </IconButton>
+          </Box>
+
+          {/* Center Section: Title */}
+          <Typography 
+            variant="h6" 
+            noWrap 
+            component="div" 
+            sx={{ textAlign: 'center' }} // Ensures text is centered if Typography has width
           >
-            <MenuIcon />
-          </IconButton>
-          <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
             虚拟助教系统
           </Typography>
-          <FormControl size="small" sx={{ minWidth: 200, mr: 2 }}>
-            <InputLabel>选择助教角色</InputLabel>
-            <Select
-              value={selectedAgent}
-              label="选择助教角色"
-              onChange={(e) => setSelectedAgent(e.target.value)}
-              sx={{ bgcolor: 'background.paper' }}
+
+          {/* Right Section: Controls */}
+          <Box sx={{ flex: 1, display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
+            <FormControl 
+              size="small" 
+              sx={{ 
+                minWidth: { xs: 150, sm: 180 }, // Adjusted from original 200, responsive
+                mr: { xs: 1, sm: 2 }, // Original mr: 2
+                // display: { xs: 'none', sm: 'flex' } // Kept visible on sm+ as per original implicit behavior
+              }}
             >
-              {agents.map((agent) => (
-                <MenuItem key={agent.id} value={agent.id}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <span>{agent.avatar}</span>
-                    <span>{agent.name}</span>
-                  </Box>
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <Tooltip title="历史记录">
-              <IconButton color="inherit" onClick={toggleHistory}>
-                <Badge badgeContent={historyMessages.length / 2} color="error">
-                  <HistoryIcon />
-                </Badge>
-              </IconButton>
-            </Tooltip>
-            <Tooltip title="清空对话">
-              <IconButton color="inherit" onClick={clearChat}>
-                <DeleteIcon />
-              </IconButton>
-            </Tooltip>
+              <Select
+                value={selectedAgent}
+                onChange={(e) => setSelectedAgent(e.target.value)}
+                displayEmpty
+                sx={{ // Original sx for Select
+                  bgcolor: 'background.paper',
+                  '& .MuiSelect-select': {
+                    py: 1
+                  }
+                }}
+              >
+                {dynamicAgents.length === 0 ? (
+                  <MenuItem value="default" disabled>
+                    <em>默认助手 (加载中...)</em>
+                  </MenuItem>
+                ) : (
+                  dynamicAgents.map((agent) => (
+                    <MenuItem key={agent.id} value={agent.id}>
+                      {agent.name}
+                    </MenuItem>
+                  ))
+                )}
+              </Select>
+            </FormControl>
+            
+            <Box sx={{ display: 'flex', gap: { xs: 0.5, sm: 1 } }}> {/* Original gap: 1 */}
+              <Tooltip title="新对话">
+                <IconButton color="inherit" onClick={createNewConversation}>
+                  <AddIcon />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title="历史记录">
+                <IconButton color="inherit" onClick={toggleHistory}>
+                  <Badge badgeContent={conversationList.length} color="error">
+                    <HistoryIcon />
+                  </Badge>
+                </IconButton>
+              </Tooltip>
+              <Tooltip title="清空当前对话">
+                <IconButton color="inherit" onClick={clearChat}>
+                  <DeleteIcon />
+                </IconButton>
+              </Tooltip>
+              {currentUser && (
+                <Tooltip title="个人资料">
+                  <IconButton 
+                    color="inherit" 
+                    onClick={() => navigate('/profile')}
+                    sx={{ p: 0.5 }}
+                  >
+                    <Avatar 
+                      sx={{ 
+                        width: 32, 
+                        height: 32, 
+                        bgcolor: 'secondary.main',
+                        fontSize: '0.875rem'
+                      }}
+                    >
+                      {currentUser.username.charAt(0).toUpperCase()}
+                    </Avatar>
+                  </IconButton>
+                </Tooltip>
+              )}
+            </Box>
           </Box>
         </Toolbar>
       </AppBar>
@@ -329,11 +549,26 @@ const Chat = () => {
                         fullWidth
                         >
                         {selectedFile ? selectedFile.name : '上传讲义文件'}
-                        </Button>
-                        {selectedFile && (
-                            <Typography variant="body2" sx={{ mt: 1, color: 'text.secondary' }}>
-                                已选择: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(2)} KB)
+                        </Button>                        {selectedFile && (
+                            <>
+                                <Typography variant="body2" sx={{ mt: 1, color: 'text.secondary' }}>
+                                    已选择: {selectedFile.name} ({formatFileSize(selectedFile.size)})
                                 </Typography>
+                                <Button
+                                    variant="outlined"
+                                    size="small"
+                                    onClick={() => {
+                                        setSelectedFile(null)
+                                        setSummary([])
+                                        if (fileInputRef.current) {
+                                            fileInputRef.current.value = ''
+                                        }
+                                    }}
+                                    sx={{ mt: 1 }}
+                                >
+                                    清除文件
+                                </Button>
+                            </>
                         )}
                         <Button
                         variant="contained"
@@ -350,12 +585,11 @@ const Chat = () => {
                         <Typography variant="h6" gutterBottom>
                             摘要要点
                         </Typography>
-                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                            {summary.map((point, index) => (
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>                            {summary.map((point, index) => (
                             <Card key={index} variant="outlined">
                                 <CardContent>
                                 <Typography variant="body2">
-                                    {index + 1}. {point}
+                                    {point.replace(/^\d+\.\s*/, `${index + 1}. `)}
                                 </Typography>
                                 </CardContent>
                             </Card>
@@ -443,7 +677,7 @@ const Chat = () => {
                       fontSize: '0.875rem',
                     }}
                   >
-                    {message.role === 'user' ? '👤' : currentAgent?.avatar}
+                    {message.role === 'user' ? '👤' : '🤖'} {/* Fixed assistant avatar */}
                   </Avatar>
                   <Paper
                     elevation={0}
@@ -457,15 +691,8 @@ const Chat = () => {
                       lineHeight: 1.5,
                       boxShadow: message.role === 'user' ? theme.shadows[1] : theme.shadows[0],
                     }}
-                  >
-                    <ListItemText
+                  >                    <ListItemText
                       primary={message.content}
-                      secondary={new Date(message.timestamp).toLocaleTimeString()}
-                      secondaryTypographyProps={{
-                        color: message.role === 'user' ? 'rgba(255,255,255,0.7)' : 'text.secondary',
-                        fontSize: '0.75rem',
-                        mt: 0.5,
-                      }}
                     />
                   </Paper>
                 </Box>
@@ -545,38 +772,75 @@ const Chat = () => {
             height: 'calc(100% - 64px)',
           },
         }}
-      >
-        <Box sx={{ p: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      >        <Box sx={{ p: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <Typography variant="h6">历史记录</Typography>
           <IconButton onClick={() => setShowHistory(false)}>
             <CloseIcon />
           </IconButton>
         </Box>
         <Divider />
+        {/* 新对话按钮 */}
+        <Box sx={{ p: 2 }}>
+          <Button
+            variant="contained"
+            fullWidth
+            startIcon={<AddIcon />}
+            onClick={createNewConversation}
+            sx={{ mb: 1 }}
+          >
+            创建新对话
+          </Button>
+        </Box>
+        <Divider />
         <List>
-          {historyMessages.map((message, index) => (
-            <ListItem
-              key={index}
+          {isLoading && conversationList.length === 0 && (
+            <ListItem>
+              <CircularProgress size={24} sx={{mx: 'auto'}} />
+            </ListItem>
+          )}          {!isLoading && conversationList.length === 0 && (
+            <ListItem>
+              <ListItemText primary="没有历史会话记录。" />
+            </ListItem>
+          )}
+          {conversationList.map((conversation) => (            <ListItem
+              key={conversation.id}
+              disablePadding // Remove default padding to make custom layout easier
               sx={{
-                bgcolor: message.role === 'user' ? 'grey.100' : 'white',
-                cursor: 'pointer',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
                 '&:hover': {
-                  bgcolor: 'grey.200',
+                  bgcolor: 'action.hover',
                 },
+                // pr: 1, // Padding right for the icon button container
               }}
-              role="button"
-              tabIndex={0}
-              onKeyPress={(e) => e.key === 'Enter' && loadHistoryMessage(message)}
             >
-              <ListItemText
-                primary={message.content}
-                secondary={new Date(message.timestamp).toLocaleTimeString()}
-              />
-              {message.role === 'user' && (
-                <IconButton size="small">
-                  <ArrowUpwardIcon />
+              <Box 
+                onClick={() => handleLoadConversation(conversation.id)} 
+                sx={{ 
+                  flexGrow: 1, 
+                  cursor: 'pointer', 
+                  p: 2, // Standard padding for list item text area
+                  minWidth: 0, // Allow text to shrink and truncate
+                }}
+              >                <ListItemText 
+                  primary={conversation.title} 
+                  secondary={conversation.created_at ? new Date(conversation.created_at).toLocaleDateString() : "点击加载此会话"} 
+                  primaryTypographyProps={{ noWrap: true }} // Prevent primary text from wrapping
+                  secondaryTypographyProps={{ noWrap: true }}
+                />
+              </Box>
+              <Tooltip title="删除此会话">
+                <IconButton 
+                  edge="end" 
+                  aria-label="delete conversation"
+                  onClick={() => handleDeleteConversation(conversation.id)}
+                  size="small"
+                  sx={{ mr: 1.5 }} // Margin for spacing
+                >
+                  <DeleteIcon fontSize="small" />
                 </IconButton>
-              )}
+              </Tooltip>
             </ListItem>
           ))}
         </List>
@@ -585,4 +849,4 @@ const Chat = () => {
   )
 }
 
-export default Chat 
+export default Chat
