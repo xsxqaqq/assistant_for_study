@@ -178,16 +178,11 @@ const Login = () => {
               sx={{ mt: 3, mb: 2 }}
             >
               登录
-            </Button>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+            </Button>            <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
               <Link href="/register" variant="body2">
                 {"还没有账号？立即注册"}
               </Link>
-              <Link 
-                component="button"
-                variant="body2"
-                onClick={() => setOpenResetDialog(true)}
-              >
+              <Link href="/reset-password" variant="body2">
                 忘记密码？
               </Link>
             </Box>

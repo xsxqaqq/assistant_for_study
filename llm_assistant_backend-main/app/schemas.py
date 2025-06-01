@@ -31,6 +31,15 @@ class AdminUserUpdate(BaseModel):
 class PasswordUpdate(BaseModel):
     new_password: str
 
+# 新增：重置密码请求模型
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+# 新增：确认重置密码模型
+class PasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str
+
 # 错误响应模型
 class ErrorResponse(BaseModel):
     detail: str

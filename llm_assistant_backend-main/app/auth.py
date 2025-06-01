@@ -36,7 +36,8 @@ from pydantic import BaseModel
 from typing import Optional
 
 from app.models import User, SessionLocal
-from app.schemas import UserCreate, UserResponse, Token, UserUpdate, PasswordUpdate, AdminUserUpdate # 新增导入 AdminUserUpdate
+from app.schemas import UserCreate, UserResponse, Token, UserUpdate, PasswordUpdate, AdminUserUpdate, PasswordResetRequest, PasswordResetConfirm # 新增导入
+from app.email_service import send_reset_password_email, send_password_changed_notification # 导入邮件服务
 
 # JWT配置
 SECRET_KEY = "your-secret-key-for-jwt"  # 生产环境应使用安全的密钥
@@ -284,7 +285,7 @@ async def admin_create_user(user_data: UserCreate, db: Session = Depends(get_db)
 
 # 重置密码
 @router.post("/reset-password")
-async def reset_password(email: str, db: Session = Depends(get_db)):
+async def reset_password(request: PasswordResetRequest, db: Session = Depends(get_db)):
     """
     重置密码接口
     
@@ -294,9 +295,10 @@ async def reset_password(email: str, db: Session = Depends(get_db)):
     """
     try:
         # 检查邮箱是否存在
-        user = db.query(User).filter(User.email == email).first()
+        user = db.query(User).filter(User.email == request.email).first()
         if not user:
-            raise HTTPException(status_code=404, detail="该邮箱未注册")
+            # 为了安全考虑，即使邮箱不存在也返回成功消息，避免暴露用户信息
+            return {"message": "如果该邮箱已注册，重置密码链接已发送到您的邮箱"}
         
         # 生成重置令牌
         reset_token = create_access_token(
@@ -304,9 +306,12 @@ async def reset_password(email: str, db: Session = Depends(get_db)):
             expires_delta=timedelta(hours=1)
         )
         
-        # TODO: 发送重置密码邮件
-        # 这里应该实现发送邮件的逻辑
-        # 为了演示，我们直接返回成功
+        # 发送重置密码邮件
+        email_sent = await send_reset_password_email(request.email, reset_token)
+        
+        if not email_sent:
+            logger.error(f"发送重置密码邮件失败: {request.email}")
+            raise HTTPException(status_code=500, detail="发送邮件失败，请稍后重试")
         
         return {"message": "重置密码链接已发送到您的邮箱"}
     except HTTPException:
@@ -318,8 +323,7 @@ async def reset_password(email: str, db: Session = Depends(get_db)):
 # 验证重置令牌并设置新密码
 @router.post("/reset-password/confirm")
 async def confirm_reset_password(
-    token: str,
-    new_password: str,
+    request: PasswordResetConfirm,
     db: Session = Depends(get_db)
 ):
     """
@@ -332,7 +336,7 @@ async def confirm_reset_password(
     try:
         # 验证令牌
         try:
-            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            payload = jwt.decode(request.token, SECRET_KEY, algorithms=[ALGORITHM])
             username = payload.get("sub")
             token_type = payload.get("type")
             
@@ -346,8 +350,11 @@ async def confirm_reset_password(
         if not user:
             raise HTTPException(status_code=404, detail="用户不存在")
         
-        user.hashed_password = get_password_hash(new_password)
+        user.hashed_password = get_password_hash(request.new_password)
         db.commit()
+        
+        # 发送密码更改通知邮件
+        await send_password_changed_notification(user.email, user.username)
         
         return {"message": "密码重置成功"}
     except HTTPException:
