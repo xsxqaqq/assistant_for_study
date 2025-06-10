@@ -5,6 +5,7 @@ from app.summary import router as summary_router
 from app.auth import router as auth_router, get_current_user  # 修正导入
 from app.models import create_tables, User  # 确保 User 被导入
 from app.schemas import UserUpdate, PasswordUpdate, UserResponse, AdminUserUpdate  # 确保模型被导入
+from app.dashboard import router as dashboard_router
 
 # 创建FastAPI应用
 app = FastAPI(
@@ -29,6 +30,7 @@ create_tables()
 app.include_router(auth_router, prefix="/auth", tags=["认证"])
 app.include_router(chat_router, prefix="/chat", tags=["聊天"])
 app.include_router(summary_router, prefix="/summary", tags=["摘要"])
+app.include_router(dashboard_router, prefix="/dashboard", tags=["仪表盘"])
 
 # 新增用户管理相关端点
 @app.get("/auth/user", response_model=UserResponse, tags=["用户管理"])

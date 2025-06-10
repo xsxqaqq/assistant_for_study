@@ -115,3 +115,17 @@ class ConversationListResponse(BaseModel):
     conversations: List[ConversationInfo]
     status_code: int = 200
     message: str = "成功"
+
+# 新增：用于仪表盘助教使用统计
+class AgentUsageStat(BaseModel):
+    agent_type: str
+    count: int
+
+# 新增：仪表盘统计数据的响应模型 
+class DashboardStatsResponse(BaseModel):
+    total_users: int
+    total_messages: int
+    total_conversations: int
+    agent_usage: List[AgentUsageStat]
+    status_code: int = 200
+    message: str = "成功获取仪表盘数据"
