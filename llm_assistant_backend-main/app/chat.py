@@ -29,7 +29,7 @@ if not api_key:
 try:
     client = openai.OpenAI(
         api_key=api_key,
-        base_url="https://free.v36.cm/v1/"
+        base_url="https://api.vveai.com/v1/"
     )
     logger.info("OpenAI 客户端初始化成功")
 except Exception as e:

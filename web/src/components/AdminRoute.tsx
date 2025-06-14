@@ -18,7 +18,7 @@ const AdminRoute = ({ children }: AdminRouteProps) => {
           return;
         }
 
-        const response = await fetch('/api/auth/users/me/', {
+        const response = await fetch('/api/auth/user', {
           headers: {
             'Authorization': `Bearer ${token}`,
           },
@@ -30,7 +30,7 @@ const AdminRoute = ({ children }: AdminRouteProps) => {
         }
 
         const user = await response.json();
-        setIsAdmin(user.is_admin);
+        setIsAdmin(user.is_admin && localStorage.getItem('loginMode') === 'admin');
       } catch (error) {
         setIsAdmin(false);
       }

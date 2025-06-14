@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Box,
   TextField,
@@ -15,28 +16,42 @@ import {
   ToggleButton,
   ToggleButtonGroup,
 } from '@mui/material';
-import { useNavigate } from 'react-router-dom';
 
 const Login = () => {
+  const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [userType, setUserType] = useState<'user' | 'admin'>('user');
+  const [loginError, setLoginError] = useState<string | null>(null);
   const [openResetDialog, setOpenResetDialog] = useState(false);
   const [email, setEmail] = useState('');
   const [resetStatus, setResetStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-  const [loginError, setLoginError] = useState('');
-  const [userType, setUserType] = useState<'user' | 'admin'>('user');
-  const navigate = useNavigate();
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [loginSuccess, setLoginSuccess] = useState<{type: 'user' | 'admin', isAdmin: boolean} | null>(null);
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoginError('');
-    
+  useEffect(() => {
+    if (loginSuccess) {
+      if (loginSuccess.type === 'user') {
+        navigate('/chat', { replace: true });
+      } else if (loginSuccess.type === 'admin' && loginSuccess.isAdmin) {
+        navigate('/admin', { replace: true });
+      }
+    }
+  }, [loginSuccess, navigate]);
+
+  const handleLogin = async () => {
+    if (!username || !password) {
+      setLoginError('请输入用户名和密码');
+      return;
+    }
+
     try {
       const formData = new URLSearchParams();
       formData.append('username', username);
       formData.append('password', password);
 
-      const response = await fetch('/api/auth/login', {
+      console.log('发送登录请求...');
+      const response = await fetch('/api/auth/token', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -44,53 +59,74 @@ const Login = () => {
         body: formData,
       });
 
-      if (response.ok) {
-        const { access_token } = await response.json();
-        localStorage.setItem('token', access_token);
-        
-        // 获取用户信息以验证身份
-        const userResponse = await fetch('/api/auth/users/me/', {
-          headers: {
-            'Authorization': `Bearer ${access_token}`
-          }
-        });
+      console.log('收到登录响应:', response.status);
+      const data = await response.json();
+      console.log('登录响应数据:', data);
 
-        if (userResponse.ok) {
-          const userData = await userResponse.json();
-          
-          // 如果是普通用户登录，直接跳转到聊天页面
-          if (userType === 'user') {
-            navigate('/chat');
-            return;
-          }
-          
-          // 如果是管理员登录，验证权限
-          if (userType === 'admin') {
-            if (!userData.is_admin) {
-              setLoginError('您没有管理员权限');
-              localStorage.removeItem('token');
-              return;
-            }
-            navigate('/admin');
-          }
-        } else {
-          throw new Error('获取用户信息失败');
+      if (!response.ok) {
+        throw new Error(data.detail || '登录失败');
+      }
+
+      if (!data.access_token) {
+        throw new Error('未收到访问令牌');
+      }
+
+      localStorage.setItem('token', data.access_token);
+      console.log('已保存token');
+      
+      // 获取用户信息
+      console.log('获取用户信息...');
+      const userResponse = await fetch('/api/auth/user', {
+        headers: {
+          'Authorization': `Bearer ${data.access_token}`,
+        },
+      });
+      
+      console.log('用户信息响应:', userResponse.status);
+      if (!userResponse.ok) {
+        throw new Error('获取用户信息失败');
+      }
+      
+      const userData = await userResponse.json();
+      console.log('用户信息:', userData);
+
+      // 保存用户信息到 localStorage
+      localStorage.setItem('user', JSON.stringify(userData));
+      
+      // 设置登录成功状态，让 useEffect 处理导航
+      if (userType === 'user') {
+        localStorage.setItem('loginMode', 'user');
+        setLoginSuccess({ type: 'user', isAdmin: false });
+      } else if (userType === 'admin') {
+        if (!userData.is_admin) {
+          setLoginError('您不是管理员，请使用普通用户登录');
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+          localStorage.removeItem('loginMode');
+          return;
         }
-      } else {
-        const { detail } = await response.json();
-        setLoginError(detail || '登录失败，请检查用户名和密码');
+        localStorage.setItem('loginMode', 'admin');
+        setLoginSuccess({ type: 'admin', isAdmin: true });
       }
     } catch (error) {
       console.error('登录错误:', error);
-      setLoginError('登录失败，请稍后重试');
+      setLoginError(error instanceof Error ? error.message : '登录失败');
+      // 清除可能部分保存的数据
       localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      localStorage.removeItem('loginMode');
     }
   };
 
   const handleResetPassword = async () => {
-    if (!email) return;
-    
+    if (!email) {
+      setResetError('请输入邮箱地址');
+      return;
+    }
+
     setResetStatus('loading');
+    setResetError(null);
+
     try {
       const response = await fetch('/api/auth/reset-password', {
         method: 'POST',
@@ -100,20 +136,14 @@ const Login = () => {
         body: JSON.stringify({ email }),
       });
 
-      const data = await response.json();
-
-      if (response.ok) {
-        setResetStatus('success');
-        setTimeout(() => {
-          setOpenResetDialog(false);
-          setResetStatus('idle');
-          setEmail('');
-        }, 2000);
-      } else {
-        setResetStatus('error');
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.detail || '重置密码请求失败');
       }
+
+      setResetStatus('success');
     } catch (error) {
-      console.error('重置密码错误:', error);
+      setResetError(error instanceof Error ? error.message : '重置密码请求失败');
       setResetStatus('error');
     }
   };
@@ -137,7 +167,10 @@ const Login = () => {
               {loginError}
             </Alert>
           )}
-          <Box component="form" onSubmit={handleLogin} sx={{ mt: 1 }}>
+          <Box component="form" onSubmit={(e) => {
+            e.preventDefault();
+            handleLogin();
+          }} sx={{ mt: 1 }}>
             <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
               <ToggleButtonGroup
                 value={userType}
@@ -178,11 +211,20 @@ const Login = () => {
               sx={{ mt: 3, mb: 2 }}
             >
               登录
-            </Button>            <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-              <Link href="/register" variant="body2">
-                {"还没有账号？立即注册"}
+            </Button>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+              <Link
+                component="button"
+                variant="body2"
+                onClick={() => navigate('/register')}
+              >
+                注册账号
               </Link>
-              <Link href="/reset-password" variant="body2">
+              <Link
+                component="button"
+                variant="body2"
+                onClick={() => setOpenResetDialog(true)}
+              >
                 忘记密码？
               </Link>
             </Box>
@@ -191,18 +233,8 @@ const Login = () => {
       </Box>
 
       <Dialog open={openResetDialog} onClose={() => setOpenResetDialog(false)}>
-        <DialogTitle>找回密码</DialogTitle>
+        <DialogTitle>重置密码</DialogTitle>
         <DialogContent>
-          {resetStatus === 'success' && (
-            <Alert severity="success" sx={{ mb: 2 }}>
-              重置密码链接已发送到您的邮箱
-            </Alert>
-          )}
-          {resetStatus === 'error' && (
-            <Alert severity="error" sx={{ mb: 2 }}>
-              发送失败，请稍后重试
-            </Alert>
-          )}
           <TextField
             autoFocus
             margin="dense"
@@ -211,16 +243,25 @@ const Login = () => {
             fullWidth
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            disabled={resetStatus === 'loading'}
           />
+          {resetError && (
+            <Alert severity="error" sx={{ mt: 2 }}>
+              {resetError}
+            </Alert>
+          )}
+          {resetStatus === 'success' && (
+            <Alert severity="success" sx={{ mt: 2 }}>
+              重置密码链接已发送到您的邮箱
+            </Alert>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOpenResetDialog(false)}>取消</Button>
-          <Button 
-            onClick={handleResetPassword} 
-            disabled={!email || resetStatus === 'loading'}
+          <Button
+            onClick={handleResetPassword}
+            disabled={resetStatus === 'loading'}
           >
-            发送重置链接
+            {resetStatus === 'loading' ? '发送中...' : '发送重置链接'}
           </Button>
         </DialogActions>
       </Dialog>

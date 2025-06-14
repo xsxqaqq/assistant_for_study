@@ -1,5 +1,6 @@
 from pydantic import BaseModel, EmailStr
-from typing import List, Optional
+from typing import List, Optional, Dict
+from datetime import datetime
 
 # 用户相关模型
 class UserBase(BaseModel):
@@ -129,3 +130,40 @@ class DashboardStatsResponse(BaseModel):
     agent_usage: List[AgentUsageStat]
     status_code: int = 200
     message: str = "成功获取仪表盘数据"
+
+class DocumentInfo(BaseModel):
+    id: str
+    filename: str
+    upload_time: datetime
+    status: str
+    chunk_count: int
+
+class DocumentListResponse(BaseModel):
+    documents: List[DocumentInfo]
+
+class DocumentUploadResponse(BaseModel):
+    document_id: str
+    status: str
+    message: str
+    task_id: Optional[str] = None
+
+class RAGQueryRequest(BaseModel):
+    question: str
+    top_k: Optional[int] = 3
+    use_cache: Optional[bool] = True
+
+class RAGQueryResponse(BaseModel):
+    answer: str
+    relevant_chunks: List[str]
+    status_code: int
+    message: str
+    processing_time: Optional[float] = None
+    cache_hit: Optional[bool] = False
+    vector_info: Optional[Dict[str, List[float]]] = None  # 存储文档块的向量信息
+
+class TaskStatusResponse(BaseModel):
+    status: str
+    document_id: str
+    filename: str
+    progress: Optional[float] = None
+    error: Optional[str] = None

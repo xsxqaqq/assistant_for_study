@@ -2,8 +2,8 @@ import requests
 
 url = "http://localhost:8000/auth/token"
 data = {
-    "username": "mytestuser",
-    "password": "mytestuser"
+    "username": "test",
+    "password": "test123"
 }
 
 resp = requests.post(url, data=data)

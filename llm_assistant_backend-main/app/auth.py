@@ -22,7 +22,7 @@ http_client = httpx.Client(proxies=proxies)
 # 初始化OpenAI客户端
 client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY"),
-    base_url="https://free.v36.cm/v1/",
+    base_url="https://api.vveai.com/v1/",
     http_client=http_client
 )
 

@@ -1,9 +1,10 @@
-from sqlalchemy import Column, Integer, String, create_engine, Boolean
+from sqlalchemy import Column, Integer, String, create_engine, Boolean, DateTime, ForeignKey, Text
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, relationship, Session
 import os
 import logging
 from passlib.context import CryptContext
+from datetime import datetime
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -33,6 +34,7 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     hashed_password = Column(String)
     is_admin = Column(Boolean, default=False) # 新增管理员字段
+    documents = relationship("KnowledgeDocument", back_populates="user", cascade="all, delete-orphan")
 
 # 新增：聊天记录模型
 class ChatHistory(Base):
@@ -44,6 +46,38 @@ class ChatHistory(Base):
     role = Column(String)  # 'user' or 'assistant'
     message = Column(String)
     agent_type = Column(String) # 记录当时使用的agent_type
+
+# 知识库文档模型
+class KnowledgeDocument(Base):
+    """知识库文档模型"""
+    __tablename__ = "knowledge_documents"
+
+    id = Column(String(36), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    filename = Column(String(255), nullable=False)
+    upload_time = Column(DateTime, default=datetime.now)
+    status = Column(String(20), default="processing")  # processing, processed, failed
+    vector_db_reference = Column(Text)  # 存储向量数据库引用信息
+    chunk_count = Column(Integer, default=0)
+
+    # 关联关系
+    user = relationship("User", back_populates="documents")
+    
+    @classmethod
+    def cleanup_invalid_documents(cls, db: Session, valid_doc_ids: set):
+        """清理无效的文档记录"""
+        try:
+            # 查找所有不在valid_doc_ids中的文档
+            invalid_docs = db.query(cls).filter(~cls.id.in_(valid_doc_ids)).all()
+            for doc in invalid_docs:
+                db.delete(doc)
+            db.commit()
+            logger.info(f"已清理 {len(invalid_docs)} 个无效文档记录")
+            return len(invalid_docs)
+        except Exception as e:
+            logger.error(f"清理无效文档记录失败: {str(e)}")
+            db.rollback()
+            return 0
 
 # 创建数据库表
 def create_tables():

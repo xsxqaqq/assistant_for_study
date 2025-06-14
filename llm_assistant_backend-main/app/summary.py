@@ -27,7 +27,7 @@ if not api_key:
 # 初始化OpenAI客户端
 client = openai.OpenAI(
     api_key=api_key,
-    base_url="https://free.v36.cm/v1/"
+    base_url="https://api.vveai.com/v1/"
 )
 
 def extract_text_from_pdf(file_content: bytes) -> str:

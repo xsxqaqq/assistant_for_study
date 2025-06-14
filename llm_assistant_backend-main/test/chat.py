@@ -1,7 +1,7 @@
 import requests
 
 url = "http://localhost:8000/chat/"
-token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0X3VzZXIiLCJleHAiOjE3NDgwMTAzNDR9.EJMkhX2pWgg23fcdWskhPArreiJgkY_2Xz9aUFOWT7M" 
+token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0IiwiZXhwIjoxNzQ5ODMyMTEwfQ.4n8Bidc1IvcyC-pPUqMbjc_p_7TR1p-nmA6cN_7nJk0" 
 
 headers = {
     "Authorization": f"Bearer {token}",
