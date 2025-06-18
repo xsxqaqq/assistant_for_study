@@ -450,6 +450,19 @@ def extract_text_from_file(file_content: bytes, filename: str) -> str:
             text = ""
             for page in reader.pages:
                 text += page.extract_text()
+        elif filename.endswith('.docx'):
+            # 对于docx文件，需要先保存到临时文件
+            import tempfile
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as temp_file:
+                temp_file.write(file_content)
+                temp_file_path = temp_file.name
+            
+            try:
+                text = extract_text_from_docx(temp_file_path)
+            finally:
+                # 删除临时文件
+                if os.path.exists(temp_file_path):
+                    os.unlink(temp_file_path)
         elif filename.endswith('.md'):
             text = markdown.markdown(file_content.decode('utf-8'))
         else:  # txt
@@ -465,11 +478,46 @@ def extract_text_from_docx(file_path: str) -> str:
     """从docx文件中提取文本"""
     try:
         doc = Document(file_path)
-        text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
+        text_parts = []
+        
+        # 提取段落文本
+        for paragraph in doc.paragraphs:
+            if paragraph.text.strip():
+                text_parts.append(paragraph.text)
+        
+        # 提取表格文本
+        for table in doc.tables:
+            for row in table.rows:
+                row_text = []
+                for cell in row.cells:
+                    if cell.text.strip():
+                        row_text.append(cell.text.strip())
+                if row_text:
+                    text_parts.append(" | ".join(row_text))
+        
+        # 提取页眉页脚（如果有的话）
+        for section in doc.sections:
+            if section.header.paragraphs:
+                for para in section.header.paragraphs:
+                    if para.text.strip():
+                        text_parts.append(f"[页眉] {para.text}")
+            if section.footer.paragraphs:
+                for para in section.footer.paragraphs:
+                    if para.text.strip():
+                        text_parts.append(f"[页脚] {para.text}")
+        
+        # 合并所有文本
+        text = "\n".join(text_parts)
+        
+        if not text.strip():
+            logger.warning(f"docx文件 {file_path} 没有提取到文本内容")
+            return ""
+        
+        logger.info(f"成功从docx文件提取 {len(text)} 个字符的文本")
         return preprocess_text(text)
     except Exception as e:
         logger.error(f"docx文件处理失败: {str(e)}")
-        raise HTTPException(status_code=400, detail="docx文件处理失败")
+        raise HTTPException(status_code=400, detail=f"docx文件处理失败: {str(e)}")
 
 def normalize_vector(vector: List[float]) -> List[float]:
     """归一化向量"""
