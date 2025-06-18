@@ -146,6 +146,7 @@ class DocumentInfo(BaseModel):
     id: str
     filename: str
     original_filename: str
+    custom_filename: Optional[str] = None  # 添加自定义文件名字段
     upload_time: datetime
     status: str
     chunk_count: int
@@ -158,6 +159,17 @@ class DocumentUploadResponse(BaseModel):
     status: str
     message: str
     task_id: Optional[str] = None
+
+# 新增：文档重命名请求模型
+class DocumentRenameRequest(BaseModel):
+    custom_filename: str
+
+# 新增：文档重命名响应模型
+class DocumentRenameResponse(BaseModel):
+    document_id: str
+    custom_filename: str
+    status_code: int = 200
+    message: str = "文档重命名成功"
 
 class RAGQueryRequest(BaseModel):
     question: str

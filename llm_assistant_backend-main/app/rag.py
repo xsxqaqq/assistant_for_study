@@ -31,7 +31,9 @@ from app.schemas import (
     DocumentInfo,
     RAGQueryRequest,
     RAGQueryResponse,
-    TaskStatusResponse
+    TaskStatusResponse,
+    DocumentRenameRequest,
+    DocumentRenameResponse
 )
 
 # 配置日志
@@ -657,6 +659,7 @@ async def process_document(
             user_id=user_id,
             filename=unique_filename,
             original_filename=file.filename,
+            custom_filename=file.filename,  # 初始化为原始文件名
             upload_time=datetime.now(),
             status="processing"
         )
@@ -784,6 +787,7 @@ async def list_documents(
                     id=doc.id,
                     filename=doc.filename,  # 使用系统生成的文件名
                     original_filename=doc.original_filename,  # 使用原始文件名
+                    custom_filename=doc.custom_filename,  # 使用自定义文件名
                     upload_time=doc.upload_time,
                     status=doc.status,
                     chunk_count=doc.chunk_count
@@ -854,6 +858,59 @@ async def delete_document(
         logger.error(f"删除文档失败: {str(e)}")
         logger.error(f"错误堆栈: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"删除文档失败: {str(e)}")
+
+@router.put("/documents/{document_id}/rename", response_model=DocumentRenameResponse)
+async def rename_document(
+    document_id: str,
+    request: DocumentRenameRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """重命名知识库文档"""
+    try:
+        # 验证文件名
+        if not request.custom_filename.strip():
+            raise HTTPException(status_code=400, detail="文件名不能为空")
+        
+        if len(request.custom_filename.strip()) > 100:
+            raise HTTPException(status_code=400, detail="文件名不能超过100个字符")
+        
+        # 查找文档
+        doc = db.query(KnowledgeDocument).filter(
+            KnowledgeDocument.id == document_id,
+            KnowledgeDocument.user_id == current_user.id
+        ).first()
+        
+        if not doc:
+            raise HTTPException(status_code=404, detail="文档未找到或无权访问")
+        
+        # 检查是否与其他文档重名
+        existing_doc = db.query(KnowledgeDocument).filter(
+            KnowledgeDocument.user_id == current_user.id,
+            KnowledgeDocument.custom_filename == request.custom_filename.strip(),
+            KnowledgeDocument.id != document_id
+        ).first()
+        
+        if existing_doc:
+            raise HTTPException(status_code=400, detail="文件名已存在，请使用其他名称")
+        
+        # 更新自定义文件名
+        doc.custom_filename = request.custom_filename.strip()
+        db.commit()
+        
+        logger.info(f"文档 {document_id} 已重命名为: {request.custom_filename}")
+        
+        return DocumentRenameResponse(
+            document_id=document_id,
+            custom_filename=request.custom_filename.strip()
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"重命名文档失败: {str(e)}")
+        logger.error(f"错误堆栈: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"重命名文档失败: {str(e)}")
 
 def get_cached_result(query: str) -> Optional[RAGQueryResponse]:
     """获取缓存的查询结果"""
@@ -1441,6 +1498,7 @@ async def admin_list_documents(
                     id=doc.id,
                     filename=doc.filename,
                     original_filename=doc.original_filename,
+                    custom_filename=doc.custom_filename,
                     upload_time=doc.upload_time,
                     status=doc.status,
                     chunk_count=doc.chunk_count

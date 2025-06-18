@@ -66,6 +66,7 @@ class KnowledgeDocument(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     filename = Column(String)  # 存储系统生成的文件名
     original_filename = Column(String)  # 存储原始文件名
+    custom_filename = Column(String)  # 存储用户自定义的文件名
     upload_time = Column(DateTime)
     status = Column(String)  # processing, processed, failed
     chunk_count = Column(Integer, default=0)
