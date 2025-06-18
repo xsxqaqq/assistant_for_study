@@ -52,13 +52,14 @@ class KnowledgeDocument(Base):
     """知识库文档模型"""
     __tablename__ = "knowledge_documents"
 
-    id = Column(String(36), primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    filename = Column(String(255), nullable=False)
-    upload_time = Column(DateTime, default=datetime.now)
-    status = Column(String(20), default="processing")  # processing, processed, failed
-    vector_db_reference = Column(Text)  # 存储向量数据库引用信息
+    id = Column(String, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    filename = Column(String)  # 存储系统生成的文件名
+    original_filename = Column(String)  # 存储原始文件名
+    upload_time = Column(DateTime)
+    status = Column(String)  # processing, processed, failed
     chunk_count = Column(Integer, default=0)
+    vector_db_reference = Column(String)  # JSON格式存储向量索引信息
 
     # 关联关系
     user = relationship("User", back_populates="documents")

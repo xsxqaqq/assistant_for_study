@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, status
 from sqlalchemy.orm import Session
 from typing import List, Optional, Tuple, Dict, Any
 import os
@@ -63,11 +63,11 @@ except Exception as e:
     raise
 
 # 配置
-CHUNK_SIZE = 1000
-CHUNK_OVERLAP = 200
+CHUNK_SIZE = 500
+CHUNK_OVERLAP = 50
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
-VECTOR_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "vector_db", "vector_db.faiss")
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "uploads")
+VECTOR_DB_PATH = os.path.join(os.path.dirname(__file__), "data", "vector_db.faiss")
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "data", "uploads")
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 CACHE_TTL = 3600  # 缓存过期时间（秒）
 
@@ -77,10 +77,24 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # 初始化全局变量
 vector_db = None
-document_chunks = {}  # 存储文档ID到其文本块的映射
+document_chunks = {}  # 存储所有文档块
 vector_index_to_doc_id = {}  # 存储向量索引到文档ID的映射
 doc_id_to_vector_indices = {}  # 存储文档ID到向量索引范围的映射
 query_cache = {}  # 简单的内存缓存
+
+# 初始化embedder
+embedder = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2', device='cpu')
+
+def get_embedding(text: str) -> np.ndarray:
+    """获取文本的向量表示"""
+    logger.info(f"开始生成文本向量: {text[:50]}...")
+    try:
+        vector = embedder.encode([text])[0]
+        logger.info("文本向量生成成功")
+        return vector
+    except Exception as e:
+        logger.error(f"生成文本向量失败: {str(e)}")
+        raise
 
 # 监控指标
 class Metrics:
@@ -189,6 +203,9 @@ def load_vector_db(db: Session = None):
         mapping_file = os.path.join(os.path.dirname(VECTOR_DB_PATH), "mapping.json")
         mapping_exists = os.path.exists(mapping_file)
         chunks_file = os.path.join(os.path.dirname(VECTOR_DB_PATH), "chunks.json")
+        chunks_exists = os.path.exists(chunks_file)
+        
+        logger.info(f"检查文件状态: 向量数据库={vector_db_exists}, 映射文件={mapping_exists}, 文档块文件={chunks_exists}")
         
         # 如果向量数据库文件不存在，但映射文件存在，删除映射文件
         if not vector_db_exists and mapping_exists:
@@ -210,29 +227,45 @@ def load_vector_db(db: Session = None):
                         mapping_data = json.load(f)
                         vector_index_to_doc_id = mapping_data.get("vector_index_to_doc_id", {})
                         doc_id_to_vector_indices = mapping_data.get("doc_id_to_vector_indices", {})
-                    
-                    # 加载文档块
-                    if os.path.exists(chunks_file):
-                        with open(chunks_file, "r", encoding="utf-8") as f:
-                            document_chunks = json.load(f)
-                    else:
-                        logger.warning("文档块文件不存在，将重新创建")
-                        document_chunks = {}
-                        
-                    # 验证数据一致性
-                    if not verify_data_consistency():
-                        logger.warning("检测到数据不一致，尝试修复...")
-                        if db is not None:
-                            repair_data_consistency(db)
-                        else:
-                            logger.error("无法修复数据一致性：数据库会话未提供")
-                        
-                    logger.info(f"已加载映射关系: 向量索引数={len(vector_index_to_doc_id)}, 文档数={len(doc_id_to_vector_indices)}, 文档块数={len(document_chunks)}")
+                    logger.info(f"已加载映射关系: 向量索引数={len(vector_index_to_doc_id)}, 文档数={len(doc_id_to_vector_indices)}")
                 else:
                     logger.warning("映射文件不存在，将创建新的映射关系")
                     vector_index_to_doc_id = {}
                     doc_id_to_vector_indices = {}
+                
+                # 加载文档块
+                if chunks_exists:
+                    try:
+                        with open(chunks_file, "r", encoding="utf-8") as f:
+                            document_chunks = json.load(f)
+                        logger.info(f"已加载文档块: {len(document_chunks)} 个块")
+                        
+                        # 验证文档块
+                        if not document_chunks:
+                            logger.warning("文档块文件为空")
+                        else:
+                            # 检查文档块是否与向量索引对应
+                            missing_chunks = []
+                            for doc_id, (start_idx, end_idx) in doc_id_to_vector_indices.items():
+                                for i in range(start_idx, end_idx + 1):
+                                    if i not in document_chunks:
+                                        missing_chunks.append(i)
+                            if missing_chunks:
+                                logger.warning(f"发现 {len(missing_chunks)} 个缺失的文档块")
+                    except Exception as e:
+                        logger.error(f"加载文档块文件失败: {str(e)}")
+                        document_chunks = {}
+                else:
+                    logger.warning("文档块文件不存在，将重新创建")
                     document_chunks = {}
+                        
+                # 验证数据一致性
+                if not verify_data_consistency():
+                    logger.warning("检测到数据不一致，尝试修复...")
+                    if db is not None:
+                        repair_data_consistency(db)
+                    else:
+                        logger.error("无法修复数据一致性：数据库会话未提供")
             except Exception as e:
                 logger.error(f"加载向量数据库失败: {str(e)}")
                 logger.error(f"错误堆栈: {traceback.format_exc()}")
@@ -350,7 +383,7 @@ def initialize_vector_db(db: Session):
                 logger.error(f"加载现有向量数据库失败: {str(e)}")
                 # 如果加载失败，创建新的向量数据库
                 dimension = embedder.get_sentence_embedding_dimension()
-                vector_db = faiss.IndexFlatIP(dimension)
+                vector_db = faiss.IndexFlatL2(dimension)
                 vector_index_to_doc_id = {}
                 doc_id_to_vector_indices = {}
                 document_chunks = {}
@@ -359,12 +392,21 @@ def initialize_vector_db(db: Session):
         else:
             # 创建新的向量数据库
             dimension = embedder.get_sentence_embedding_dimension()
-            vector_db = faiss.IndexFlatIP(dimension)
+            vector_db = faiss.IndexFlatL2(dimension)
             vector_index_to_doc_id = {}
             doc_id_to_vector_indices = {}
             document_chunks = {}
             save_vector_db()
             logger.info(f"创建新的向量数据库，维度: {dimension}")
+            
+        # 验证向量数据库状态
+        if vector_db is not None:
+            logger.info(f"向量数据库状态: 维度={vector_db.d}, 向量数={vector_db.ntotal}")
+            if vector_db.ntotal > 0:
+                logger.info(f"映射关系: 向量索引数={len(vector_index_to_doc_id)}, 文档数={len(doc_id_to_vector_indices)}, 文档块数={len(document_chunks)}")
+        else:
+            logger.warning("向量数据库未初始化")
+            
     except Exception as e:
         logger.error(f"初始化向量数据库失败: {str(e)}")
         logger.error(f"错误堆栈: {traceback.format_exc()}")
@@ -377,6 +419,10 @@ async def startup_event():
     db = next(get_db())
     try:
         initialize_vector_db(db)
+        logger.info("向量数据库初始化完成")
+    except Exception as e:
+        logger.error(f"向量数据库初始化失败: {str(e)}")
+        raise
     finally:
         db.close()
 
@@ -384,8 +430,6 @@ def preprocess_text(text: str) -> str:
     """文本预处理函数"""
     # 移除多余空白字符
     text = re.sub(r'\s+', ' ', text)
-    # 移除特殊字符
-    text = re.sub(r'[^\w\s\u4e00-\u9fff]', '', text)
     # 移除重复段落
     paragraphs = text.split('\n\n')
     unique_paragraphs = []
@@ -528,198 +572,130 @@ async def process_document(
     db: Session
 ) -> Dict[str, Any]:
     """处理上传的文档"""
+    doc = None
+    file_path = None
     try:
         # 检查文件类型
         if not file.filename.lower().endswith(('.txt', '.pdf', '.docx')):
-            raise HTTPException(status_code=400, detail="不支持的文件类型")
-            
+            raise HTTPException(status_code=400, detail="不支持的文件类型，仅支持 .txt、.pdf 和 .docx 文件")
+        
         # 检查文件大小
         file_size = 0
         content = b""
         while chunk := await file.read(8192):
+            content += chunk
             file_size += len(chunk)
             if file_size > MAX_FILE_SIZE:
-                raise HTTPException(status_code=400, detail="文件大小超过限制")
-            content += chunk
-            
-        # 重置文件指针位置
-        await file.seek(0)
-            
+                raise HTTPException(status_code=400, detail=f"文件大小超过限制 ({MAX_FILE_SIZE/1024/1024}MB)")
+        
+        # 生成唯一文件名（使用UUID和时间戳）
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_extension = os.path.splitext(file.filename)[1]
+        doc_id = str(uuid.uuid4())  # 只生成一次UUID
+        unique_filename = f"{timestamp}_{doc_id}{file_extension}"
+        
         # 创建用户目录
         user_dir = os.path.join(UPLOAD_DIR, str(user_id))
         os.makedirs(user_dir, exist_ok=True)
         
         # 保存文件
-        file_path = os.path.join(user_dir, file.filename)
+        file_path = os.path.join(user_dir, unique_filename)
         with open(file_path, "wb") as f:
             f.write(content)
-            
+        
+        # 创建文档记录
+        doc = KnowledgeDocument(
+            id=doc_id,  # 使用之前生成的UUID
+            user_id=user_id,
+            filename=unique_filename,
+            original_filename=file.filename,
+            upload_time=datetime.now(),
+            status="processing"
+        )
+        db.add(doc)
+        db.commit()
+        
         # 提取文本
         text = extract_text_from_file(content, file.filename)
         if not text:
             raise HTTPException(status_code=400, detail="无法提取文本内容")
-            
-        # 分块
-        chunks = text.split("\n\n")
-        chunks = [chunk.strip() for chunk in chunks if chunk.strip()]
+        
+        # 预处理文本
+        text = preprocess_text(text)
+        
+        # 分割文本
+        chunks = split_text(text)
         
         # 生成向量
-        embeddings = []
+        vectors = []
         for chunk in chunks:
-            embedding = embedder.encode(chunk)
-            embeddings.append(embedding)
-            
-        # 转换为numpy数组并归一化
-        embeddings_array = np.array(embeddings).astype('float32')
-        faiss.normalize_L2(embeddings_array)
+            vector = get_embedding(chunk)
+            vectors.append(vector)
         
-        # 初始化向量数据库（如果为空）
-        global vector_db
+        # 更新向量数据库
         if vector_db is None:
-            # 使用嵌入模型的维度创建向量数据库
-            dimension = embedder.get_sentence_embedding_dimension()
-            vector_db = faiss.IndexFlatIP(dimension)
-            logger.info(f"创建新的向量数据库，维度: {dimension}")
-            
-        # 检查向量维度是否匹配
-        if embeddings_array.shape[1] != vector_db.d:
-            error_msg = f"向量维度不匹配：嵌入维度={embeddings_array.shape[1]}，向量数据库维度={vector_db.d}"
-            logger.error(error_msg)
-            raise HTTPException(status_code=500, detail=error_msg)
-            
-        # 获取当前向量数量作为起始索引
-        start_idx = vector_db.ntotal
+            initialize_vector_db(db)
         
-        # 创建新文档记录
-        new_doc = KnowledgeDocument(
-            id=str(uuid.uuid4()),
-            user_id=user_id,
-            filename=file.filename,
-            upload_time=datetime.now(),
-            status="processing",
-            vector_db_reference=None,
-            chunk_count=len(chunks)
-        )
+        # 添加向量到数据库
+        start_index = vector_db.ntotal
+        vector_db.add(np.array(vectors))
+        end_index = vector_db.ntotal - 1
         
-        # 开始数据库事务
-        try:
-            db.add(new_doc)
-            db.commit()
-            
-            # 添加向量到数据库
-            vector_db.add(embeddings_array)
-            
-            # 保存文档块
-            for i, chunk in enumerate(chunks):
-                document_chunks[start_idx + i] = chunk
-                
-            # 更新文档记录
-            new_doc.vector_db_reference = json.dumps({
-                "start_index": start_idx,
-                "end_index": start_idx + len(chunks) - 1,
-                "file_path": file_path
-            })
-            new_doc.status = "processed"
-            db.commit()
-            
-            # 保存文档ID和块的映射
-            for i in range(len(chunks)):
-                vector_index_to_doc_id[start_idx + i] = new_doc.id
-                
-            # 保存文档ID到向量索引的映射
-            doc_id_to_vector_indices[new_doc.id] = (start_idx, start_idx + len(chunks) - 1)
-            
-            # 保存向量数据库
-            save_vector_db()
-            
-            # 检查数据一致性
-            consistency_info = check_data_consistency(db)
-            if consistency_info["invalid_documents"] > 0:
-                logger.warning(f"文档处理完成但存在数据不一致: {consistency_info}")
-            
-            return {
-                "document_id": str(new_doc.id),
-                "status": "processed",
-                "message": "文档处理完成",
-                "consistency_info": consistency_info
-            }
-            
-        except Exception as e:
-            # 回滚事务
-            db.rollback()
-            
-            # 清理已添加的向量和文档块
-            if vector_db is not None:
-                try:
-                    # 删除已添加的向量
-                    vector_db.remove_ids(np.array(range(start_idx, start_idx + len(chunks))))
-                except Exception as del_e:
-                    logger.error(f"删除向量失败: {str(del_e)}")
-            
-            # 清理文档块
-            for i in range(len(chunks)):
-                if start_idx + i in document_chunks:
-                    del document_chunks[start_idx + i]
-            
-            # 清理映射关系
-            for i in range(len(chunks)):
-                if start_idx + i in vector_index_to_doc_id:
-                    del vector_index_to_doc_id[start_idx + i]
-            
-            if new_doc.id in doc_id_to_vector_indices:
-                del doc_id_to_vector_indices[new_doc.id]
-            
-            # 如果文件已保存，删除它
-            if os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                except Exception as del_e:
-                    logger.error(f"删除失败的文件时出错: {str(del_e)}")
-            
-            raise HTTPException(status_code=500, detail=f"文档处理失败: {str(e)}")
-            
+        # 更新文档块映射
+        for i, chunk in enumerate(chunks):
+            vector_index = start_index + i
+            document_chunks[vector_index] = chunk
+            vector_index_to_doc_id[vector_index] = doc_id
+        
+        # 更新文档ID到向量索引的映射
+        doc_id_to_vector_indices[doc_id] = (start_index, end_index)
+        
+        # 更新文档记录
+        doc.status = "processed"
+        doc.vector_db_reference = json.dumps({
+            "start_index": start_index,
+            "end_index": end_index,
+            "file_path": file_path
+        })
+        doc.chunk_count = len(chunks)
+        db.commit()
+        
+        # 保存向量数据库
+        save_vector_db()
+        
+        # 检查数据一致性
+        consistency_info = check_data_consistency(db)
+        if consistency_info["invalid_documents"] > 0:
+            logger.warning(f"文档处理完成但存在数据不一致: {consistency_info}")
+        
+        return {
+            "document_id": doc_id,
+            "filename": unique_filename,
+            "status": "processed",
+            "chunk_count": len(chunks),
+            "consistency_info": consistency_info
+        }
+        
     except Exception as e:
-        logger.error(f"文档处理失败: {str(e)}")
+        logger.error(f"处理文档失败: {str(e)}")
         logger.error(f"错误堆栈: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"文档处理失败: {str(e)}")
-
-async def process_document_in_background(file_content: bytes, filename: str, db: Session, user_id: int, doc_id: str):
-    """后台处理文档"""
-    try:
-        doc = db.query(KnowledgeDocument).filter(KnowledgeDocument.id == doc_id).first()
-        if not doc:
-            logger.error(f"后台处理时找不到文档: {doc_id}")
-            return
         
-        try:
-            # 创建一个临时的UploadFile对象
-            from fastapi import UploadFile
-            import io
-            
-            file_obj = io.BytesIO(file_content)
-            upload_file = UploadFile(
-                file=file_obj,
-                filename=filename
-            )
-            
-            # 调用process_document函数
-            processed_doc = await process_document(upload_file, user_id, db)
-            
-            # 更新文档状态
-            doc.status = processed_doc['status']
-            doc.vector_db_reference = processed_doc.get('vector_db_reference')
-            doc.chunk_count = processed_doc.get('chunk_count', 0)
-            db.commit()
-            
-            logger.info(f"后台文档处理成功: {doc_id}")
-        except Exception as e:
+        # 回滚事务
+        db.rollback()
+        
+        # 如果文件已保存，删除它
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception as del_e:
+                logger.error(f"删除失败的文件时出错: {str(del_e)}")
+        
+        # 更新文档状态为失败
+        if doc:
             doc.status = "failed"
             db.commit()
-            logger.error(f"后台文档处理失败: {str(e)}")
-            logger.error(f"错误堆栈: {traceback.format_exc()}")
-    except Exception as e:
-        logger.error(f"后台任务处理异常: {str(e)}")
-        logger.error(f"错误堆栈: {traceback.format_exc()}")
+        
+        raise HTTPException(status_code=500, detail=f"处理文档失败: {str(e)}")
 
 @router.post("/documents/upload", response_model=DocumentUploadResponse)
 async def upload_document(
@@ -730,69 +706,18 @@ async def upload_document(
 ):
     """上传文档到知识库"""
     try:
-        logger.info(f"开始处理文件上传: {file.filename}")
-        # 检查文件类型
-        if not file.filename.endswith(('.txt', '.pdf', '.md')):
-            logger.warning(f"不支持的文件类型: {file.filename}")
-            raise HTTPException(status_code=400, detail="仅支持txt、pdf和md文件")
+        # 直接处理文档
+        result = await process_document(file, current_user.id, db)
         
-        # 读取文件内容
-        content = await file.read()
-        logger.info(f"文件大小: {len(content)} bytes")
-        
-        # 检查文件大小
-        if len(content) > MAX_FILE_SIZE:
-            logger.warning(f"文件过大: {len(content)} bytes")
-            raise HTTPException(status_code=400, detail="文件大小不能超过10MB")
-        
-        # 如果是后台任务处理
-        if background_tasks:
-            logger.info("使用后台任务处理文件")
-            # 先创建文档记录
-            doc_id = str(uuid.uuid4())
-            doc = KnowledgeDocument(
-                id=doc_id,
-                user_id=current_user.id,
-                filename=file.filename,
-                upload_time=datetime.now(),
-                status="processing",
-                vector_db_reference=None,
-                chunk_count=0
-            )
-            db.add(doc)
-            db.commit()
-            
-            # 添加后台任务
-            background_tasks.add_task(
-                process_document_in_background,
-                content, file.filename, db, current_user.id, doc_id
-            )
-            
-            logger.info(f"文件上传成功，文档ID: {doc_id}")
-            return DocumentUploadResponse(
-                document_id=doc_id,
-                status="processing",
-                message="文档已接收，正在后台处理"
-            )
-        else:
-            # 同步处理
-            try:
-                logger.info("使用同步方式处理文件")
-                doc = await process_document(file, current_user.id, db)
-                logger.info(f"文件处理成功，文档ID: {doc['document_id']}")
-                return DocumentUploadResponse(
-                    document_id=doc['document_id'],
-                    status=doc['status'],
-                    message=doc['message']
-                )
-            except Exception as e:
-                logger.error(f"文档处理失败: {str(e)}")
-                raise HTTPException(status_code=500, detail=f"文档处理失败: {str(e)}")
-    except HTTPException:
-        raise
+        return DocumentUploadResponse(
+            document_id=result["document_id"],
+            filename=result["filename"],
+            status=result["status"],
+            message="文档处理成功"
+        )
     except Exception as e:
-        logger.error(f"文件上传失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"文件上传失败: {str(e)}")
+        logger.error(f"文档上传失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/documents", response_model=DocumentListResponse)
 async def list_documents(
@@ -809,7 +734,8 @@ async def list_documents(
             documents=[
                 DocumentInfo(
                     id=doc.id,
-                    filename=doc.filename,
+                    filename=doc.filename,  # 使用系统生成的文件名
+                    original_filename=doc.original_filename,  # 使用原始文件名
                     upload_time=doc.upload_time,
                     status=doc.status,
                     chunk_count=doc.chunk_count
@@ -942,7 +868,7 @@ def hybrid_search(query: str, k: int = 3) -> List[Tuple[str, float]]:
         
         # 合并结果
         results = []
-        seen_chunks = set()  # 使用集合来跟踪已处理的块
+        seen_chunks = set()
         
         # 处理语义搜索结果
         for idx, similarity in zip(indices[0], similarities[0]):
@@ -962,13 +888,22 @@ def hybrid_search(query: str, k: int = 3) -> List[Tuple[str, float]]:
                     
                     # 综合分数
                     final_score = 0.7 * semantic_score + 0.3 * keyword_score
-                    results.append((chunk_text, final_score))
-                    seen_chunks.add(chunk_tuple)
-                    logger.debug(f"文档块得分: {final_score:.4f} (语义: {semantic_score:.4f}, 关键词: {keyword_score:.4f})")
+                    
+                    # 只有当分数超过阈值时才添加到结果中
+                    if final_score > 0.5:  # 设置相关性阈值
+                        results.append((chunk_text, final_score))
+                        seen_chunks.add(chunk_tuple)
+                        logger.debug(f"文档块得分: {final_score:.4f} (语义: {semantic_score:.4f}, 关键词: {keyword_score:.4f})")
         
         # 按分数排序并返回前k个结果
         results.sort(key=lambda x: x[1], reverse=True)
         logger.info(f"混合检索完成，返回 {len(results[:k])} 个结果")
+        
+        # 如果没有找到足够相关的结果，返回空列表
+        if not results:
+            logger.warning("没有找到足够相关的结果")
+            return []
+            
         return results[:k]
         
     except Exception as e:
@@ -1033,73 +968,86 @@ async def query_knowledge_base(
     try:
         logger.info(f"开始处理查询请求: {request.question}")
         
-        # 检查向量数据库状态
-        if vector_db is None:
-            logger.error("向量数据库未初始化")
-            raise HTTPException(status_code=500, detail="向量数据库未初始化")
+        # 检查向量数据库状态，如果为空则尝试加载
+        if vector_db is None or vector_db.ntotal == 0:
+            logger.info("向量数据库为空，尝试加载")
+            try:
+                load_vector_db(db)
+            except Exception as e:
+                logger.error(f"加载向量数据库失败: {str(e)}")
+                # 即使加载失败也继续执行，只是没有知识库支持
         
-        if vector_db.ntotal == 0:
-            logger.error("向量数据库为空")
-            raise HTTPException(status_code=500, detail="向量数据库为空")
+        # 初始化结果变量
+        relevant_chunks = []
+        vector_info = None
         
-        # 检查文档块映射
-        if not document_chunks:
-            logger.error("文档块映射为空")
-            raise HTTPException(status_code=500, detail="知识库中没有文档")
-        
-        logger.info(f"向量数据库大小: {vector_db.ntotal}, 文档数: {len(document_chunks)}")
-        
-        # 检查缓存
-        cached_result = get_cached_result(request.question)
-        if cached_result:
-            logger.info("使用缓存结果")
-            update_metrics(start_time, cache_hit=True)
-            return cached_result
-        
-        # 使用混合检索
-        logger.info("开始混合检索")
-        try:
-            relevant_chunks_with_scores = hybrid_search(request.question, request.top_k or 3)
-            if not relevant_chunks_with_scores:
-                logger.warning("未找到相关文档块")
-                return RAGQueryResponse(
-                    answer="抱歉，我没有找到相关的信息。",
-                    relevant_chunks=[],
-                    status_code=200,
-                    message="未找到相关信息"
-                )
+        # 如果向量数据库存在且有内容，尝试检索相关文档
+        if vector_db is not None and vector_db.ntotal > 0 and document_chunks:
+            logger.info(f"向量数据库大小: {vector_db.ntotal}, 文档块数: {len(document_chunks)}")
+            logger.info(f"document_chunks 的键: {list(document_chunks.keys())}")
+            logger.info(f"document_chunks 的值示例: {list(document_chunks.values())[:2] if document_chunks else '无'}")
             
-            relevant_chunks = [chunk for chunk, _ in relevant_chunks_with_scores]
-            logger.info(f"找到 {len(relevant_chunks)} 个相关文档块")
-
-            # 获取相关文档块的向量信息
-            vector_info = {}
-            for chunk in relevant_chunks:
-                # 生成文档块的向量
-                chunk_embedding = embedder.encode([chunk])[0]
-                vector_info[chunk] = chunk_embedding.tolist()
+            # 检查缓存
+            cached_result = get_cached_result(request.question)
+            if cached_result:
+                logger.info("使用缓存结果")
+                update_metrics(start_time, cache_hit=True)
+                return cached_result
             
-        except ValueError as e:
-            logger.error(f"混合检索失败: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
-        except Exception as e:
-            logger.error(f"混合检索失败: {str(e)}")
-            import traceback
-            logger.error(f"错误堆栈: {traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=f"混合检索失败: {str(e)}")
+            # 使用混合检索
+            logger.info("开始混合检索")
+            try:
+                # 生成查询向量
+                logger.info("开始生成查询向量")
+                query_vector = get_embedding(request.question)
+                logger.info("查询向量生成完成")
+                
+                # 向量检索
+                logger.info("开始向量检索")
+                D, I = vector_db.search(query_vector.reshape(1, -1), request.top_k)
+                logger.info(f"向量检索完成，找到 {len(I[0])} 个结果")
+                logger.info(f"检索到的索引: {I[0]}")
+                logger.info(f"检索到的相似度: {D[0]}")
+                
+                # 获取相关文档块
+                relevant_chunks = []
+                for idx in I[0]:
+                    idx_int = int(idx)  # 将 np.int64 转换为普通整数
+                    logger.info(f"检查索引 {idx_int} 是否在 document_chunks 中: {idx_int in document_chunks}")
+                    if idx_int in document_chunks:
+                        chunk = document_chunks[idx_int]
+                        logger.info(f"找到文档块: {chunk[:100]}...")
+                        relevant_chunks.append(chunk)
+                
+                logger.info(f"最终找到 {len(relevant_chunks)} 个相关文档块")
+                
+                vector_info = {
+                    "total_vectors": vector_db.ntotal,
+                    "retrieved_chunks": len(relevant_chunks)
+                }
+                logger.info(f"检索到 {len(relevant_chunks)} 个相关文档块")
+                
+            except Exception as e:
+                logger.error(f"向量检索失败: {str(e)}")
+                import traceback
+                logger.error(f"错误堆栈: {traceback.format_exc()}")
+                # 即使检索失败也继续执行，只是没有相关文档
+        else:
+            logger.warning(f"向量数据库状态: vector_db={vector_db is not None}, ntotal={vector_db.ntotal if vector_db else 0}, document_chunks={len(document_chunks) if document_chunks else 0}")
         
-        # 构建提示
-        context = "\n\n".join(relevant_chunks)
-        system_prompt = f"""你是一个专业助教，基于以下上下文信息回答问题。如果上下文不包含回答问题所需的信息，请回答"我不知道"。
-请确保你的回答：
-1. 准确：只基于提供的上下文信息
-2. 完整：尽可能包含所有相关信息
-3. 清晰：使用简洁明了的语言
-4. 专业：保持教育者的专业态度
+        # 构建系统提示
+        if relevant_chunks:
+            system_prompt = f"""你是一个智能助手。请基于以下参考信息回答问题。如果参考信息不足以回答问题，请基于你的知识回答。
+            
+参考信息：
+{chr(10).join(relevant_chunks)}
 
-上下文:
-{context}"""
+问题：{request.question}"""
+        else:
+            system_prompt = f"""你是一个智能助手。请直接回答问题。
 
+问题：{request.question}"""
+        
         # 调用LLM生成回答
         try:
             logger.info("开始调用OpenAI API")
@@ -1125,7 +1073,8 @@ async def query_knowledge_base(
             )
             
             # 缓存结果
-            cache_result(request.question, result)
+            if relevant_chunks:  # 只在有相关文档时缓存
+                cache_result(request.question, result)
             
             update_metrics(start_time)
             return result
@@ -1194,3 +1143,435 @@ async def check_documents_consistency(
     except Exception as e:
         logger.error(f"检查数据一致性失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"检查数据一致性失败: {str(e)}")
+
+# 添加管理员权限检查函数
+async def get_current_admin(current_user: User = Depends(get_current_user)):
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="需要管理员权限"
+        )
+    return current_user
+
+# 添加管理员专用的知识库管理接口
+@router.delete("/admin/documents/all", status_code=status.HTTP_204_NO_CONTENT)
+async def clear_all_documents(
+    current_user: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """清空所有知识库文档（仅管理员可用）"""
+    global vector_db, vector_index_to_doc_id, doc_id_to_vector_indices, document_chunks
+    
+    try:
+        # 删除所有文档记录
+        db.query(KnowledgeDocument).delete()
+        db.commit()
+        
+        # 清空向量数据库
+        vector_db = None
+        vector_index_to_doc_id = {}
+        doc_id_to_vector_indices = {}
+        document_chunks = {}
+        
+        # 删除向量数据库文件
+        if os.path.exists(VECTOR_DB_PATH):
+            try:
+                os.remove(VECTOR_DB_PATH)
+                logger.info(f"已删除向量数据库文件: {VECTOR_DB_PATH}")
+            except Exception as e:
+                logger.error(f"删除向量数据库文件失败: {str(e)}")
+        
+        # 删除映射文件
+        mapping_file = os.path.join(os.path.dirname(VECTOR_DB_PATH), "mapping.json")
+        if os.path.exists(mapping_file):
+            try:
+                os.remove(mapping_file)
+                logger.info(f"已删除映射文件: {mapping_file}")
+            except Exception as e:
+                logger.error(f"删除映射文件失败: {str(e)}")
+        
+        # 删除文档块文件
+        chunks_file = os.path.join(os.path.dirname(VECTOR_DB_PATH), "chunks.json")
+        if os.path.exists(chunks_file):
+            try:
+                os.remove(chunks_file)
+                logger.info(f"已删除文档块文件: {chunks_file}")
+            except Exception as e:
+                logger.error(f"删除文档块文件失败: {str(e)}")
+        
+        # 清空上传目录
+        for filename in os.listdir(UPLOAD_DIR):
+            file_path = os.path.join(UPLOAD_DIR, filename)
+            try:
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+                    logger.info(f"已删除文件: {file_path}")
+            except Exception as e:
+                logger.error(f"删除文件失败 {file_path}: {str(e)}")
+        
+        # 重新初始化向量数据库
+        try:
+            dimension = embedder.get_sentence_embedding_dimension()
+            vector_db = faiss.IndexFlatL2(dimension)
+            save_vector_db()
+            logger.info("已重新初始化向量数据库")
+        except Exception as e:
+            logger.error(f"重新初始化向量数据库失败: {str(e)}")
+        
+        logger.info("已清空所有知识库文档")
+    except Exception as e:
+        logger.error(f"清空知识库失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"清空知识库失败: {str(e)}"
+        )
+
+@router.delete("/admin/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_document(
+    document_id: str,
+    current_user: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """删除指定知识库文档（仅管理员可用）"""
+    global vector_db, vector_index_to_doc_id, doc_id_to_vector_indices, document_chunks
+    
+    try:
+        # 查找文档
+        document = db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document_id).first()
+        if not document:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="文档不存在"
+            )
+        
+        # 从向量数据库中删除相关向量
+        if document_id in doc_id_to_vector_indices:
+            indices = doc_id_to_vector_indices[document_id]
+            if vector_db is not None and vector_db.ntotal > 0:
+                try:
+                    # 创建一个新的向量数据库，排除要删除的向量
+                    new_vector_db = faiss.IndexFlatL2(vector_db.d)
+                    remaining_vectors = []
+                    remaining_indices = []
+                    
+                    # 收集需要保留的向量
+                    for i in range(vector_db.ntotal):
+                        if i not in indices:
+                            vector = vector_db.reconstruct(i)
+                            remaining_vectors.append(vector)
+                            remaining_indices.append(i)
+                    
+                    # 如果有剩余向量，创建新的向量数据库
+                    if remaining_vectors:
+                        remaining_vectors = np.array(remaining_vectors).astype('float32')
+                        new_vector_db.add(remaining_vectors)
+                        vector_db = new_vector_db
+                        
+                        # 更新映射关系
+                        new_vector_index_to_doc_id = {}
+                        new_doc_id_to_vector_indices = {}
+                        
+                        for new_idx, old_idx in enumerate(remaining_indices):
+                            doc_id = vector_index_to_doc_id[old_idx]
+                            if doc_id != document_id:
+                                new_vector_index_to_doc_id[new_idx] = doc_id
+                                if doc_id not in new_doc_id_to_vector_indices:
+                                    new_doc_id_to_vector_indices[doc_id] = []
+                                new_doc_id_to_vector_indices[doc_id].append(new_idx)
+                        
+                        vector_index_to_doc_id = new_vector_index_to_doc_id
+                        doc_id_to_vector_indices = new_doc_id_to_vector_indices
+                    else:
+                        # 如果没有剩余向量，重置向量数据库
+                        vector_db = None
+                        vector_index_to_doc_id = {}
+                        doc_id_to_vector_indices = {}
+                    
+                    # 删除文档块
+                    if document_id in document_chunks:
+                        del document_chunks[document_id]
+                    
+                    # 保存更新后的向量数据库
+                    save_vector_db()
+                except Exception as e:
+                    logger.error(f"更新向量数据库失败: {str(e)}")
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"更新向量数据库失败: {str(e)}"
+                    )
+        
+        # 删除数据库记录
+        db.delete(document)
+        db.commit()
+        
+        # 删除上传的文件
+        file_path = os.path.join(UPLOAD_DIR, document.filename)
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception as e:
+                logger.error(f"删除文件失败 {file_path}: {str(e)}")
+                # 继续执行，不中断删除流程
+        
+        logger.info(f"已删除文档 {document_id}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除文档失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"删除文档失败: {str(e)}"
+        )
+
+@router.get("/admin/documents", response_model=DocumentListResponse)
+async def admin_list_documents(
+    current_user: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """获取所有知识库文档列表（仅管理员可用）"""
+    try:
+        documents = db.query(KnowledgeDocument).all()
+        return {
+            "documents": [
+                DocumentInfo(
+                    id=doc.id,
+                    filename=doc.filename,
+                    original_filename=doc.original_filename,
+                    upload_time=doc.upload_time,
+                    status=doc.status,
+                    chunk_count=doc.chunk_count
+                )
+                for doc in documents
+            ]
+        }
+    except Exception as e:
+        logger.error(f"获取文档列表失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取文档列表失败: {str(e)}"
+        )
+
+def split_text(text: str) -> List[str]:
+    """将文本分割成块"""
+    # 按空行分割文本
+    chunks = text.split('\n\n')
+    # 移除空块
+    chunks = [chunk.strip() for chunk in chunks if chunk.strip()]
+    return chunks
+
+@router.get("/debug/vector_db", response_model=dict)
+async def debug_vector_db(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """调试向量数据库状态"""
+    try:
+        global vector_db, document_chunks, vector_index_to_doc_id, doc_id_to_vector_indices
+        
+        # 确保向量数据库已加载
+        if vector_db is None:
+            load_vector_db(db)
+        
+        debug_info = {
+            "vector_db_exists": vector_db is not None,
+            "vector_db_ntotal": vector_db.ntotal if vector_db else 0,
+            "vector_db_dimension": vector_db.d if vector_db else 0,
+            "document_chunks_count": len(document_chunks),
+            "document_chunks_keys": list(document_chunks.keys()) if document_chunks else [],
+            "document_chunks_sample": list(document_chunks.values())[:3] if document_chunks else [],
+            "vector_index_to_doc_id_count": len(vector_index_to_doc_id),
+            "doc_id_to_vector_indices_count": len(doc_id_to_vector_indices),
+            "doc_id_to_vector_indices": doc_id_to_vector_indices,
+        }
+        
+        # 获取数据库中的文档信息
+        docs = db.query(KnowledgeDocument).all()
+        debug_info["database_documents"] = [
+            {
+                "id": doc.id,
+                "user_id": doc.user_id,
+                "filename": doc.filename,
+                "original_filename": doc.original_filename,
+                "status": doc.status,
+                "chunk_count": doc.chunk_count,
+                "vector_db_reference": doc.vector_db_reference
+            }
+            for doc in docs
+        ]
+        
+        return debug_info
+    except Exception as e:
+        logger.error(f"调试向量数据库失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"调试失败: {str(e)}")
+
+@router.post("/admin/repair_vector_db", response_model=dict)
+async def admin_repair_vector_db(
+    current_user: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """修复向量数据库映射关系（仅管理员可用）"""
+    global vector_db, document_chunks, vector_index_to_doc_id, doc_id_to_vector_indices
+    
+    try:
+        logger.info("开始修复向量数据库映射关系")
+        
+        # 获取所有已处理的文档
+        processed_docs = db.query(KnowledgeDocument).filter(
+            KnowledgeDocument.status == "processed"
+        ).all()
+        
+        if not processed_docs:
+            return {
+                "success": True,
+                "message": "没有找到已处理的文档",
+                "documents_processed": 0
+            }
+        
+        logger.info(f"找到 {len(processed_docs)} 个已处理的文档，开始修复...")
+        
+        # 初始化新的映射关系
+        new_document_chunks = {}
+        new_vector_index_to_doc_id = {}
+        new_doc_id_to_vector_indices = {}
+        
+        # 创建新的向量数据库
+        dimension = embedder.get_sentence_embedding_dimension()
+        new_vector_db = faiss.IndexFlatL2(dimension)
+        
+        current_index = 0
+        processed_count = 0
+        
+        for doc in processed_docs:
+            try:
+                logger.info(f"处理文档: {doc.original_filename} (ID: {doc.id})")
+                
+                # 构建文件路径
+                file_path = os.path.join(UPLOAD_DIR, str(doc.user_id), doc.filename)
+                
+                if not os.path.exists(file_path):
+                    logger.warning(f"文件不存在 {file_path}")
+                    continue
+                
+                # 读取文件内容
+                with open(file_path, 'rb') as f:
+                    content = f.read()
+                
+                # 提取文本
+                text = extract_text_from_file(content, doc.filename)
+                if not text:
+                    logger.warning(f"无法提取文本内容 {doc.filename}")
+                    continue
+                
+                # 预处理文本
+                text = preprocess_text(text)
+                
+                # 分割文本
+                chunks = split_text(text)
+                if not chunks:
+                    logger.warning(f"文档分割后没有块 {doc.filename}")
+                    continue
+                
+                logger.info(f"文档分割为 {len(chunks)} 个块")
+                
+                # 生成向量
+                vectors = []
+                for chunk in chunks:
+                    try:
+                        vector = get_embedding(chunk)
+                        vectors.append(vector)
+                    except Exception as e:
+                        logger.warning(f"生成向量失败: {str(e)}")
+                        continue
+                
+                if not vectors:
+                    logger.warning(f"没有成功生成向量 {doc.filename}")
+                    continue
+                
+                # 添加到向量数据库
+                start_index = current_index
+                vectors_array = np.array(vectors).astype('float32')
+                new_vector_db.add(vectors_array)
+                end_index = current_index + len(vectors) - 1
+                
+                # 更新映射关系
+                for i, chunk in enumerate(chunks):
+                    vector_index = start_index + i
+                    new_document_chunks[vector_index] = chunk
+                    new_vector_index_to_doc_id[vector_index] = doc.id
+                
+                new_doc_id_to_vector_indices[doc.id] = (start_index, end_index)
+                
+                # 更新文档记录
+                doc.vector_db_reference = json.dumps({
+                    "start_index": start_index,
+                    "end_index": end_index,
+                    "file_path": file_path
+                })
+                doc.chunk_count = len(chunks)
+                
+                current_index = new_vector_db.ntotal
+                processed_count += 1
+                
+                logger.info(f"成功处理，向量索引范围: {start_index}-{end_index}")
+                
+            except Exception as e:
+                logger.error(f"处理文档 {doc.id} 时出错: {str(e)}")
+                continue
+        
+        # 保存修复后的数据
+        try:
+            # 保存向量数据库
+            os.makedirs(os.path.dirname(VECTOR_DB_PATH), exist_ok=True)
+            faiss.write_index(new_vector_db, VECTOR_DB_PATH)
+            logger.info(f"已保存向量数据库到: {VECTOR_DB_PATH}")
+            
+            # 保存映射关系
+            mapping_file = os.path.join(os.path.dirname(VECTOR_DB_PATH), "mapping.json")
+            mapping_data = {
+                "vector_index_to_doc_id": new_vector_index_to_doc_id,
+                "doc_id_to_vector_indices": new_doc_id_to_vector_indices
+            }
+            with open(mapping_file, "w", encoding="utf-8") as f:
+                json.dump(mapping_data, f, ensure_ascii=False, indent=2)
+            logger.info(f"已保存映射关系到: {mapping_file}")
+            
+            # 保存文档块
+            chunks_file = os.path.join(os.path.dirname(VECTOR_DB_PATH), "chunks.json")
+            with open(chunks_file, "w", encoding="utf-8") as f:
+                json.dump(new_document_chunks, f, ensure_ascii=False, indent=2)
+            logger.info(f"已保存文档块到: {chunks_file}")
+            
+            # 更新全局变量
+            vector_db = new_vector_db
+            document_chunks = new_document_chunks
+            vector_index_to_doc_id = new_vector_index_to_doc_id
+            doc_id_to_vector_indices = new_doc_id_to_vector_indices
+            
+            # 提交数据库更改
+            db.commit()
+            
+            logger.info(f"修复完成！向量数据库大小: {new_vector_db.ntotal}, 文档块数量: {len(new_document_chunks)}")
+            
+            return {
+                "success": True,
+                "message": "向量数据库修复成功",
+                "documents_processed": processed_count,
+                "vector_db_size": new_vector_db.ntotal,
+                "document_chunks_count": len(new_document_chunks),
+                "documents_count": len(new_doc_id_to_vector_indices)
+            }
+            
+        except Exception as e:
+            logger.error(f"保存修复数据失败: {str(e)}")
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"保存修复数据失败: {str(e)}"
+            )
+            
+    except Exception as e:
+        logger.error(f"修复向量数据库失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"修复向量数据库失败: {str(e)}"
+        )

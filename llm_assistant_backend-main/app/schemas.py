@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 # 用户相关模型
@@ -134,6 +134,7 @@ class DashboardStatsResponse(BaseModel):
 class DocumentInfo(BaseModel):
     id: str
     filename: str
+    original_filename: str
     upload_time: datetime
     status: str
     chunk_count: int
@@ -159,7 +160,7 @@ class RAGQueryResponse(BaseModel):
     message: str
     processing_time: Optional[float] = None
     cache_hit: Optional[bool] = False
-    vector_info: Optional[Dict[str, List[float]]] = None  # 存储文档块的向量信息
+    vector_info: Optional[Dict[str, Any]] = None  # 存储向量数据库相关信息
 
 class TaskStatusResponse(BaseModel):
     status: str
