@@ -43,7 +43,7 @@ import {
 } from '@mui/icons-material'
 import SummarizeIcon from '@mui/icons-material/Summarize'
 import CloseIcon from '@mui/icons-material/Close'
-import type { Message, Document, DocumentUploadResponse, RAGQueryResponse } from '../types'
+import type { Message, Document, DocumentUploadResponse } from '../types'
 
 interface Agent {
   id: string
@@ -196,76 +196,75 @@ const Chat = () => {
     setIsLoading(true)
 
     try {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('token')
       if (!token) {
-        throw new Error('未登录，请先登录');
+        throw new Error('未登录')
       }
 
-      console.log('发送消息:', input);
-      let response;
+      let response
       if (isRAGMode) {
-        // RAG模式：使用知识库查询
+        // RAG 模式
         response = await fetch('/api/rag/query', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
+            'Authorization': `Bearer ${token}`
           },
           body: JSON.stringify({
             question: input,
-            top_k: 3,
-          }),
-        });
+            top_k: 3
+          })
+        })
 
         if (!response.ok) {
-          throw new Error('查询失败');
+          throw new Error('查询失败')
         }
 
-        const data: RAGQueryResponse = await response.json();
-        setMessages(prev => [...prev, {
+        const ragResponse = await response.json()
+        const assistantMessage: Message = {
           role: 'assistant',
-          content: data.answer,
+          content: ragResponse.answer,
           timestamp: new Date().toISOString(),
-          relevant_chunks: data.relevant_chunks,
-        }]);
+          rag_response: ragResponse
+        }
+        setMessages(prev => [...prev, assistantMessage])
       } else {
-        // 普通模式：直接对话
+        // 普通对话模式
         response = await fetch('/api/chat/', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
+            'Authorization': `Bearer ${token}`
           },
           body: JSON.stringify({
             message: input,
             agent_type: selectedAgent,
             conversation_id: currentConversationId.current || undefined
-          }),
-        });
+          })
+        })
 
         if (!response.ok) {
-          throw new Error('发送消息失败');
+          throw new Error('发送消息失败')
         }
 
-        const data = await response.json();
-        console.log('收到回复:', data);
+        const data = await response.json()
+        console.log('收到回复:', data)
         
         // 如果是新对话，保存conversation_id
         if (!currentConversationId.current && data.conversation_id) {
-          currentConversationId.current = data.conversation_id;
+          currentConversationId.current = data.conversation_id
         }
 
         const assistantMessage: Message = {
           role: 'assistant',
           content: data.reply,
-          timestamp: new Date().toISOString(),
+          timestamp: new Date().toISOString()
         }
-
         setMessages(prev => [...prev, assistantMessage])
       }
     } catch (error) {
-      console.error('发送消息错误:', error);
-      alert(error instanceof Error ? error.message : '发送消息失败，请稍后重试');
+      console.error('发送消息失败:', error)
+      setError(error instanceof Error ? error.message : '发送消息失败')
     } finally {
       setIsLoading(false)
     }
@@ -378,7 +377,7 @@ const Chat = () => {
     const file = event.target.files?.[0]
     if (file) {
       // 检查文件类型
-      if (file.type === 'text/plain' || file.type === 'application/pdf' || file.name.endsWith('.md')) {
+      if (file.type === 'text/plain' || file.type === 'application/pdf' || file.name.endsWith('.docx')) {
         // 检查文件大小 (限制为10MB)
         const maxSize = 10 * 1024 * 1024; // 10MB
         if (file.size > maxSize) {
@@ -387,7 +386,7 @@ const Chat = () => {
         }
         setSelectedFile(file)
       } else {
-        alert('请上传txt、pdf或md文件')
+        alert('请上传txt、pdf或docx文件')
       }
     }
   }
@@ -436,25 +435,32 @@ const Chat = () => {
   const fetchDocuments = async () => {
     const token = localStorage.getItem('token');
     if (!token) {
-      setError('请先登录');
-      return;
+        setError('请先登录');
+        return;
     }
 
     try {
-      const response = await fetch('/api/rag/documents', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
+        const response = await fetch('/api/rag/documents', {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+            },
+        });
 
-      if (!response.ok) {
-        throw new Error('获取文档列表失败');
-      }
+        if (!response.ok) {
+            throw new Error('获取文档列表失败');
+        }
 
-      const data = await response.json();
-      setDocuments(data.documents);
+        const data = await response.json();
+        // 检查是否有重复的文档
+        const uniqueDocs = data.documents.reduce((acc: Document[], doc: Document) => {
+            if (!acc.find(d => d.id === doc.id)) {
+                acc.push(doc);
+            }
+            return acc;
+        }, []);
+        setDocuments(uniqueDocs);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '获取文档列表失败');
+        setError(err instanceof Error ? err.message : '获取文档列表失败');
     }
   };
 
@@ -470,30 +476,53 @@ const Chat = () => {
     formData.append('file', selectedFile);
 
     try {
-      const response = await fetch('/api/rag/documents/upload', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: formData
-      });
+        const response = await fetch('/api/rag/documents/upload', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            },
+            body: formData
+        });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || '文档上传失败');
-      }
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || '文档上传失败');
+        }
 
-      const data: DocumentUploadResponse = await response.json();
-      setSuccess(data.message || '文档上传成功');
-      setSelectedFile(null);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-      fetchDocuments();
+        const data: DocumentUploadResponse = await response.json();
+        setSuccess(data.message || '文档上传成功');
+        setSelectedFile(null);
+        if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+        }
+        
+        // 立即获取最新文档列表
+        await fetchDocuments();
+        
+        // 如果文档正在处理中，启动轮询
+        if (data.status === 'processing') {
+            const pollInterval = setInterval(async () => {
+                await fetchDocuments();
+                const docs = await fetch('/api/rag/documents', {
+                    headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('token')}`
+                    }
+                }).then(res => res.json());
+                
+                const doc = docs.documents.find((d: Document) => d.id === data.document_id);
+                if (doc && doc.status === 'processed') {
+                    clearInterval(pollInterval);
+                    setSuccess('文档处理完成');
+                }
+            }, 2000); // 每2秒检查一次
+            
+            // 30秒后停止轮询
+            setTimeout(() => clearInterval(pollInterval), 30000);
+        }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '文档上传失败');
+        setError(err instanceof Error ? err.message : '文档上传失败');
     } finally {
-      setIsLoading(false);
+        setIsLoading(false);
     }
   };
 
@@ -532,6 +561,93 @@ const Chat = () => {
   useEffect(() => {
     fetchDocuments();
   }, []);
+
+  const renderMessage = (message: Message) => {
+    const isUser = message.role === 'user'
+    const ragResponse = message.rag_response
+    const hasRelevantChunks = ragResponse?.relevant_chunks && ragResponse.relevant_chunks.length > 0
+    const isGenericResponse = message.content.toLowerCase().includes('你好') || 
+      message.content.toLowerCase().includes('hello') ||
+      message.content.toLowerCase().includes('hi') ||
+      message.content.toLowerCase().includes('有什么可以帮助你') ||
+      message.content.toLowerCase().includes('有什么我可以帮助你的')
+
+    return (
+      <Box
+        key={message.timestamp}
+        sx={{
+          display: 'flex',
+          justifyContent: isUser ? 'flex-end' : 'flex-start',
+          mb: 2,
+        }}
+      >
+        <Box
+          sx={{
+            maxWidth: '70%',
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              mb: 1,
+            }}
+          >
+            <Avatar
+              sx={{
+                bgcolor: isUser ? 'primary.main' : 'secondary.main',
+                width: 32,
+                height: 32,
+                mr: 1,
+              }}
+            >
+              {isUser ? 'U' : 'A'}
+            </Avatar>
+            <Typography variant="subtitle2" color="text.secondary">
+              {isUser ? '你' : '助手'}
+            </Typography>
+          </Box>
+          <Paper
+            elevation={1}
+            sx={{
+              p: 2,
+              bgcolor: isUser ? 'primary.light' : 'background.paper',
+              color: isUser ? 'primary.contrastText' : 'text.primary',
+              borderRadius: 2,
+            }}
+          >
+            <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+              {message.content}
+            </Typography>
+            
+            {/* 只在有相关文档块且不是通用回复时显示引用来源 */}
+            {hasRelevantChunks && ragResponse && !isGenericResponse && (
+              <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
+                <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                  引用来源：
+                </Typography>
+                <List dense>
+                  {ragResponse.relevant_chunks.map((chunk, index) => (
+                    <ListItem key={index} sx={{ py: 0.5 }}>
+                      <ListItemText
+                        primary={
+                          <Typography variant="body2" color="text.secondary">
+                            {chunk}
+                          </Typography>
+                        }
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+              </Box>
+            )}
+          </Paper>
+        </Box>
+      </Box>
+    )
+  }
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
@@ -685,7 +801,7 @@ const Chat = () => {
                       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                           <input
                           type="file"
-                          accept=".txt,.pdf,.md"
+                          accept=".txt,.pdf,.docx"
                           onChange={handleFileSelect}
                           style={{ display: 'none' }}
                           ref={fileInputRef}
@@ -798,67 +914,11 @@ const Chat = () => {
                 gap: {xs:0.5, sm:1},
               }}
             >
-              {messages.map((message, index) => (
-                <ListItem
-                  key={index}
-                  sx={{
-                    justifyContent: message.role === 'user' ? 'flex-end' : 'flex-start',
-                    px: 0,
-                    py: 0.5,
-                  }}
-                >
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      flexDirection: message.role === 'user' ? 'row-reverse' : 'row',
-                      alignItems: 'flex-start',
-                      gap: 1.5,
-                      maxWidth: 'min(90%, 800px)',
-                      width: 'fit-content',
-                    }}
-                  >
-                    <Avatar
-                      sx={{
-                        bgcolor: message.role === 'user' ? 'primary.main' : 'secondary.main',
-                        width: 32,
-                        height: 32,
-                        fontSize: '0.875rem',
-                      }}
-                    >
-                      {message.role === 'user' ? '👤' : '🤖'} {/* Fixed assistant avatar */}
-                    </Avatar>
-                    <Paper
-                      elevation={0}
-                      sx={{
-                        p: {xs:1, sm:1.5},
-                        bgcolor: message.role === 'user' ? 'primary.main' : 'grey.200',
-                        color: message.role === 'user' ? 'primary.contrastText' : 'text.primary',
-                        borderRadius: 2,
-                        maxWidth: '100%',
-                        wordBreak: 'break-word',
-                        lineHeight: 1.5,
-                        boxShadow: message.role === 'user' ? theme.shadows[1] : theme.shadows[0],
-                      }}
-                    >                      <ListItemText
-                        primary={message.content}
-                      />
-                    </Paper>
-                  </Box>
-                </ListItem>
-              ))}
-              {/* {isLoading && (
-                <ListItem sx={{ justifyContent: 'flex-start', px: 0 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, pl: 1 }}>
-                    <Avatar sx={{ bgcolor: 'secondary.main', width: 32, height: 32 }}>
-                      {currentAgent?.avatar}
-                    </Avatar>
-                    <CircularProgress size={24} />
-                  </Box>
-                </ListItem> */}
+              {messages.map(renderMessage)}
               {isLoading && (
-                  <Box sx={{display: 'flex', justifyContent: 'center', p: 2}}>
-                      <CircularProgress />
-                  </Box>
+                <Box sx={{ display: 'flex', justifyContent: 'center', my: 2 }}>
+                  <CircularProgress size={24} />
+                </Box>
               )}
               <div ref={messagesEndRef} />
             </List>
@@ -1006,7 +1066,7 @@ const Chat = () => {
             <Box sx={{ mb: 3 }}>
               <input
                 type="file"
-                accept=".txt,.pdf,.md"
+                accept=".txt,.pdf,.docx"
                 onChange={handleFileSelect}
                 style={{ display: 'none' }}
                 ref={fileInputRef}

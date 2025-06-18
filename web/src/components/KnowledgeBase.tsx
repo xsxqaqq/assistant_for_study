@@ -267,7 +267,7 @@ const KnowledgeBase: React.FC = () => {
     if (file) {
       if (file.type === 'text/plain' || 
           file.type === 'application/pdf' || 
-          file.name.endsWith('.md')) {
+          file.name.endsWith('.docx')) {
         const maxSize = 10 * 1024 * 1024; // 10MB
         if (file.size > maxSize) {
           setError('文件大小不能超过10MB');
@@ -275,7 +275,7 @@ const KnowledgeBase: React.FC = () => {
         }
         setSelectedFile(file);
       } else {
-        setError('请上传txt、pdf或md文件');
+        setError('请上传txt、pdf或docx文件');
       }
     }
   };
@@ -387,7 +387,7 @@ const KnowledgeBase: React.FC = () => {
             <Box sx={{ mb: 3 }}>
               <input
                 type="file"
-                accept=".txt,.pdf,.md"
+                accept=".txt,.pdf,.docx"
                 onChange={handleFileSelect}
                 style={{ display: 'none' }}
                 ref={fileInputRef}

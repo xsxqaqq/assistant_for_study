@@ -11,6 +11,8 @@ import ConfirmResetPassword from './components/ConfirmResetPassword';
 import Admin from './components/Admin';
 import Profile from './components/Profile';
 import AdminRoute from './components/AdminRoute';
+import Dashboard from './components/Dashboard';
+import KnowledgeBaseAdmin from './components/KnowledgeBaseAdmin';
 import './App.css';
 
 function App() {
@@ -26,9 +28,19 @@ function App() {
           
           {/* 需要认证的路由 */}
           <Route element={<PrivateRoute><Layout /></PrivateRoute>}>
+            <Route path="/dashboard" element={
+              <AdminRoute>
+                <Dashboard />
+              </AdminRoute>
+            } />
             <Route path="/admin" element={
               <AdminRoute>
                 <Admin />
+              </AdminRoute>
+            } />
+            <Route path="/knowledge-base" element={
+              <AdminRoute>
+                <KnowledgeBaseAdmin />
               </AdminRoute>
             } />
             
@@ -37,11 +49,7 @@ function App() {
           </Route>
           
           {/* 默认重定向 */}
-          <Route path="/" element={
-            localStorage.getItem('loginMode') === 'admin' ? 
-              <Navigate to="/admin" replace /> : 
-              <Navigate to="/chat" replace />
-          } />
+          <Route path="/" element={<Navigate to="/chat" replace />} />
         </Routes>
       </Router>
     </ThemeProvider>

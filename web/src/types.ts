@@ -3,6 +3,7 @@ export interface Message {
   content: string;
   timestamp: string;
   relevant_chunks?: string[];
+  rag_response?: RAGQueryResponse;
 }
 
 export interface Document {

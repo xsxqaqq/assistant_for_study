@@ -25,6 +25,7 @@ import {
   Chat as ChatIcon,
   Person as PersonIcon,
   ExitToApp as ExitToAppIcon,
+  LibraryBooks as LibraryBooksIcon,
 } from '@mui/icons-material';
 
 const drawerWidth = 240;
@@ -96,8 +97,9 @@ const Layout: React.FC = () => {
 
   const menuItems = [
     ...(currentUser?.is_admin && localStorage.getItem('loginMode') === 'admin' ? [
-      { text: '仪表盘', icon: <DashboardIcon />, path: '/' },
+      { text: '仪表盘', icon: <DashboardIcon />, path: '/dashboard' },
       { text: '用户管理', icon: <PersonIcon />, path: '/admin' },
+      { text: '知识库管理', icon: <LibraryBooksIcon />, path: '/knowledge-base' },
     ] : [
       { text: '聊天', icon: <ChatIcon />, path: '/chat' },
     ]),
