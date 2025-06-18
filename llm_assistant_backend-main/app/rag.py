@@ -63,8 +63,8 @@ except Exception as e:
     raise
 
 # 配置
-CHUNK_SIZE = 500
-CHUNK_OVERLAP = 50
+CHUNK_SIZE = 800         # 每块800字符，更平衡的大小
+CHUNK_OVERLAP = 150      # 重叠150字符，保持上下文连贯性
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 VECTOR_DB_PATH = os.path.join(os.path.dirname(__file__), "data", "vector_db.faiss")
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "data", "uploads")
@@ -1351,13 +1351,46 @@ async def admin_list_documents(
             detail=f"获取文档列表失败: {str(e)}"
         )
 
+def get_optimal_chunk_size(text_length: int) -> tuple:
+    """根据文档长度动态确定最优分块大小"""
+    if text_length < 2000:
+        # 短文档：使用较小的块
+        return 400, 50
+    elif text_length < 10000:
+        # 中等文档：使用标准块
+        return 800, 150
+    elif text_length < 50000:
+        # 长文档：使用较大的块
+        return 1200, 200
+    else:
+        # 超长文档：使用最大块
+        return 1500, 250
+
 def split_text(text: str) -> List[str]:
     """将文本分割成块"""
-    # 按空行分割文本
-    chunks = text.split('\n\n')
-    # 移除空块
-    chunks = [chunk.strip() for chunk in chunks if chunk.strip()]
-    return chunks
+    try:
+        # 根据文档长度动态调整分块大小
+        text_length = len(text)
+        optimal_chunk_size, optimal_overlap = get_optimal_chunk_size(text_length)
+        
+        # 创建动态分块器
+        dynamic_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=optimal_chunk_size,
+            chunk_overlap=optimal_overlap,
+            length_function=len,
+            is_separator_regex=False,
+        )
+        
+        chunks = dynamic_splitter.split_text(text)
+        logger.info(f"使用动态分块器，文档长度: {text_length}，块大小: {optimal_chunk_size}，重叠: {optimal_overlap}，分割为 {len(chunks)} 个块")
+        return chunks
+    except Exception as e:
+        logger.warning(f"智能分块失败，使用备用分块方法: {str(e)}")
+        # 备用方法：按空行分割
+        chunks = text.split('\n\n')
+        chunks = [chunk.strip() for chunk in chunks if chunk.strip()]
+        logger.info(f"使用备用分块方法，将文本分割为 {len(chunks)} 个块")
+        return chunks
 
 @router.get("/debug/vector_db", response_model=dict)
 async def debug_vector_db(
