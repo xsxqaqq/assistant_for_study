@@ -576,8 +576,8 @@ async def process_document(
     file_path = None
     try:
         # 检查文件类型
-        if not file.filename.lower().endswith(('.txt', '.pdf', '.docx')):
-            raise HTTPException(status_code=400, detail="不支持的文件类型，仅支持 .txt、.pdf 和 .docx 文件")
+        if not file.filename.lower().endswith(('.txt', '.pdf', '.docx', '.md')):
+            raise HTTPException(status_code=400, detail="不支持的文件类型，仅支持 .txt、.pdf、.docx 和 .md 文件")
         
         # 检查文件大小
         file_size = 0

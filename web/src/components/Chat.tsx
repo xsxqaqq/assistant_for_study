@@ -377,7 +377,7 @@ const Chat = () => {
     const file = event.target.files?.[0]
     if (file) {
       // 检查文件类型
-      if (file.type === 'text/plain' || file.type === 'application/pdf' || file.name.endsWith('.docx')) {
+      if (file.type === 'text/plain' || file.type === 'application/pdf' || file.name.endsWith('.docx') || file.name.endsWith('.md')) {
         // 检查文件大小 (限制为10MB)
         const maxSize = 10 * 1024 * 1024; // 10MB
         if (file.size > maxSize) {
@@ -386,7 +386,7 @@ const Chat = () => {
         }
         setSelectedFile(file)
       } else {
-        alert('请上传txt、pdf或docx文件')
+        alert('请上传txt、pdf、docx或md文件')
       }
     }
   }
@@ -801,7 +801,7 @@ const Chat = () => {
                       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                           <input
                           type="file"
-                          accept=".txt,.pdf,.docx"
+                          accept=".txt,.pdf,.docx,.md"
                           onChange={handleFileSelect}
                           style={{ display: 'none' }}
                           ref={fileInputRef}
@@ -1066,7 +1066,7 @@ const Chat = () => {
             <Box sx={{ mb: 3 }}>
               <input
                 type="file"
-                accept=".txt,.pdf,.docx"
+                accept=".txt,.pdf,.docx,.md"
                 onChange={handleFileSelect}
                 style={{ display: 'none' }}
                 ref={fileInputRef}
