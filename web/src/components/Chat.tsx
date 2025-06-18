@@ -616,9 +616,10 @@ const Chat = () => {
               bgcolor: isUser ? 'primary.light' : 'background.paper',
               color: isUser ? 'primary.contrastText' : 'text.primary',
               borderRadius: 2,
+              textAlign: 'left',   // <------ 添加这一行
             }}
           >
-            <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+            <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap',textAlign: 'left', }}>
               {message.content}
             </Typography>
             
