@@ -33,7 +33,9 @@ from app.schemas import (
     RAGQueryResponse,
     TaskStatusResponse,
     DocumentRenameRequest,
-    DocumentRenameResponse
+    DocumentRenameResponse,
+    AdminDocumentInfo,
+    AdminDocumentListResponse
 )
 
 # 配置日志
@@ -1484,28 +1486,32 @@ async def admin_delete_document(
             detail=f"删除文档失败: {str(e)}"
         )
 
-@router.get("/admin/documents", response_model=DocumentListResponse)
+@router.get("/admin/documents", response_model=AdminDocumentListResponse)
 async def admin_list_documents(
     current_user: User = Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
     """获取所有知识库文档列表（仅管理员可用）"""
     try:
-        documents = db.query(KnowledgeDocument).all()
-        return {
-            "documents": [
-                DocumentInfo(
+        # 获取所有文档，包括用户信息
+        documents = db.query(KnowledgeDocument).join(User).all()
+        return AdminDocumentListResponse(
+            documents=[
+                AdminDocumentInfo(
                     id=doc.id,
                     filename=doc.filename,
                     original_filename=doc.original_filename,
                     custom_filename=doc.custom_filename,
                     upload_time=doc.upload_time,
                     status=doc.status,
-                    chunk_count=doc.chunk_count
+                    chunk_count=doc.chunk_count,
+                    user_id=doc.user.id,
+                    username=doc.user.username,
+                    email=doc.user.email
                 )
                 for doc in documents
             ]
-        }
+        )
     except Exception as e:
         logger.error(f"获取文档列表失败: {str(e)}")
         raise HTTPException(

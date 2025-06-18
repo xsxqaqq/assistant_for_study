@@ -194,3 +194,22 @@ class TaskStatusResponse(BaseModel):
     filename: str
     progress: Optional[float] = None
     error: Optional[str] = None
+
+# 新增：管理员文档信息模型
+class AdminDocumentInfo(BaseModel):
+    id: str
+    filename: str
+    original_filename: str
+    custom_filename: Optional[str] = None
+    upload_time: datetime
+    status: str
+    chunk_count: int
+    user_id: int
+    username: str
+    email: str
+
+# 新增：管理员文档列表响应模型
+class AdminDocumentListResponse(BaseModel):
+    documents: List[AdminDocumentInfo]
+    status_code: int = 200
+    message: str = "成功获取所有文档"
