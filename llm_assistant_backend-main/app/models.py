@@ -47,6 +47,16 @@ class ChatHistory(Base):
     message = Column(String)
     agent_type = Column(String) # 记录当时使用的agent_type
 
+# 新增：会话标题模型
+class Conversation(Base):
+    __tablename__ = "conversations"
+
+    id = Column(String, primary_key=True, index=True)  # conversation_id
+    user_id = Column(Integer, index=True)
+    title = Column(String, default="")  # 用户自定义标题
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 # 知识库文档模型
 class KnowledgeDocument(Base):
     """知识库文档模型"""
