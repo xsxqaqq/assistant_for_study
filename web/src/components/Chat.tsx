@@ -40,6 +40,7 @@ import {
   Add as AddIcon,
   Upload as UploadIcon,
   Pending as PendingIcon,
+  Edit as EditIcon,
 } from '@mui/icons-material'
 import SummarizeIcon from '@mui/icons-material/Summarize'
 import CloseIcon from '@mui/icons-material/Close'
@@ -89,6 +90,16 @@ const Chat = () => {
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'))
   const [summary, setSummary] = useState<string[]>([])
   const [isSummarizing, setIsSummarizing] = useState(false)
+  
+  // 新增：编辑标题相关状态
+  const [editingTitle, setEditingTitle] = useState<string>('')
+  const [editingConversationId, setEditingConversationId] = useState<string>('')
+  const [showEditDialog, setShowEditDialog] = useState(false)
+  
+  // 新增：文档重命名相关状态
+  const [editingDocumentId, setEditingDocumentId] = useState<string>('')
+  const [editingDocumentName, setEditingDocumentName] = useState<string>('')
+  const [showRenameDialog, setShowRenameDialog] = useState(false)
 
   // 格式化文件大小显示
   const formatFileSize = (bytes: number): string => {
@@ -212,7 +223,9 @@ const Chat = () => {
           },
           body: JSON.stringify({
             question: input,
-            top_k: 3
+            top_k: 3,
+            conversation_id: currentConversationId.current || undefined,
+            agent_type: "rag"
           })
         })
 
@@ -221,6 +234,12 @@ const Chat = () => {
         }
 
         const ragResponse = await response.json()
+        
+        // 如果是新对话，保存conversation_id
+        if (!currentConversationId.current && ragResponse.conversation_id) {
+          currentConversationId.current = ragResponse.conversation_id
+        }
+        
         const assistantMessage: Message = {
           role: 'assistant',
           content: ragResponse.answer,
@@ -373,6 +392,62 @@ const Chat = () => {
       }
     }
   };
+
+  // 新增：编辑标题相关函数
+  const handleEditTitle = (conversation: ConversationInfo) => {
+    setEditingTitle(conversation.title);
+    setEditingConversationId(conversation.id);
+    setShowEditDialog(true);
+  };
+
+  const handleSaveTitle = async () => {
+    if (!editingTitle.trim()) {
+      alert('标题不能为空');
+      return;
+    }
+
+    const token = localStorage.getItem('token');
+    if (!token) {
+      alert('请登录后再试');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const response = await fetch(`/api/chat/conversations/${editingConversationId}/title`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ title: editingTitle.trim() }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || '更新标题失败');
+      }
+
+      // 更新本地会话列表
+      setConversationList(prevList => 
+        prevList.map(conv => 
+          conv.id === editingConversationId 
+            ? { ...conv, title: editingTitle.trim() }
+            : conv
+        )
+      );
+
+      setShowEditDialog(false);
+      setEditingTitle('');
+      setEditingConversationId('');
+    } catch (error) {
+      console.error('更新标题错误:', error);
+      alert(error instanceof Error ? error.message : '更新标题失败，请稍后重试');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (file) {
@@ -561,6 +636,62 @@ const Chat = () => {
   useEffect(() => {
     fetchDocuments();
   }, []);
+
+  // 新增：文档重命名相关函数
+  const handleRenameDocument = (document: Document) => {
+    setEditingDocumentId(document.id);
+    setEditingDocumentName(document.custom_filename || document.original_filename);
+    setShowRenameDialog(true);
+  };
+
+  const handleSaveDocumentName = async () => {
+    if (!editingDocumentName.trim()) {
+      alert('文件名不能为空');
+      return;
+    }
+
+    const token = localStorage.getItem('token');
+    if (!token) {
+      alert('请登录后再试');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const response = await fetch(`/api/rag/documents/${editingDocumentId}/rename`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ custom_filename: editingDocumentName.trim() }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || '重命名失败');
+      }
+
+      // 更新本地文档列表
+      setDocuments(prevList => 
+        prevList.map(doc => 
+          doc.id === editingDocumentId 
+            ? { ...doc, custom_filename: editingDocumentName.trim() }
+            : doc
+        )
+      );
+
+      setShowRenameDialog(false);
+      setEditingDocumentId('');
+      setEditingDocumentName('');
+      setSuccess('文档重命名成功');
+    } catch (error) {
+      console.error('重命名文档错误:', error);
+      setError(error instanceof Error ? error.message : '重命名失败，请稍后重试');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const renderMessage = (message: Message) => {
     const isUser = message.role === 'user'
@@ -1011,9 +1142,10 @@ const Chat = () => {
                 <ListItemText primary="没有历史会话记录。" />
               </ListItem>
             )}
-            {conversationList.map((conversation) => (            <ListItem
+            {conversationList.map((conversation) => (
+              <ListItem
                 key={conversation.id}
-                disablePadding // Remove default padding to make custom layout easier
+                disablePadding
                 sx={{
                   display: 'flex',
                   justifyContent: 'space-between',
@@ -1021,7 +1153,6 @@ const Chat = () => {
                   '&:hover': {
                     bgcolor: 'action.hover',
                   },
-                  // pr: 1, // Padding right for the icon button container
                 }}
               >
                 <Box 
@@ -1029,27 +1160,47 @@ const Chat = () => {
                   sx={{ 
                     flexGrow: 1, 
                     cursor: 'pointer', 
-                    p: 2, // Standard padding for list item text area
-                    minWidth: 0, // Allow text to shrink and truncate
+                    p: 2,
+                    minWidth: 0,
                   }}
-                >                <ListItemText 
+                >
+                  <ListItemText 
                     primary={conversation.title} 
                     secondary={conversation.created_at ? new Date(conversation.created_at).toLocaleDateString() : "点击加载此会话"} 
-                    primaryTypographyProps={{ noWrap: true }} // Prevent primary text from wrapping
+                    primaryTypographyProps={{ noWrap: true }}
                     secondaryTypographyProps={{ noWrap: true }}
                   />
                 </Box>
-                <Tooltip title="删除此会话">
-                  <IconButton 
-                    edge="end" 
-                    aria-label="delete conversation"
-                    onClick={() => handleDeleteConversation(conversation.id)}
-                    size="small"
-                    sx={{ mr: 1.5 }} // Margin for spacing
-                  >
-                    <DeleteIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
+                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                  <Tooltip title="编辑标题">
+                    <IconButton 
+                      edge="end" 
+                      aria-label="edit title"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleEditTitle(conversation);
+                      }}
+                      size="small"
+                      sx={{ mr: 0.5 }}
+                    >
+                      <EditIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="删除此会话">
+                    <IconButton 
+                      edge="end" 
+                      aria-label="delete conversation"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteConversation(conversation.id);
+                      }}
+                      size="small"
+                      sx={{ mr: 1.5 }}
+                    >
+                      <DeleteIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Box>
               </ListItem>
             ))}
           </List>
@@ -1101,17 +1252,39 @@ const Chat = () => {
                 <ListItem
                   key={doc.id}
                   secondaryAction={
-                    <IconButton
-                      edge="end"
-                      onClick={() => handleDelete(doc.id)}
-                      disabled={doc.status === 'processing'}
-                    >
-                      {doc.status === 'processing' ? <PendingIcon /> : <DeleteIcon />}
-                    </IconButton>
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                      <IconButton
+                        edge="end"
+                        onClick={() => handleRenameDocument(doc)}
+                        disabled={doc.status === 'processing'}
+                        size="small"
+                      >
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                      <IconButton
+                        edge="end"
+                        onClick={() => handleDelete(doc.id)}
+                        disabled={doc.status === 'processing'}
+                        size="small"
+                      >
+                        {doc.status === 'processing' ? <PendingIcon /> : <DeleteIcon />}
+                      </IconButton>
+                    </Box>
                   }
                 >
                   <ListItemText
-                    primary={doc.filename}
+                    primary={
+                      <Box>
+                        <Typography variant="body1" component="span">
+                          {doc.custom_filename || doc.original_filename}
+                        </Typography>
+                        {doc.custom_filename && doc.custom_filename !== doc.original_filename && (
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            原名: {doc.original_filename}
+                          </Typography>
+                        )}
+                      </Box>
+                    }
                     secondary={
                       <>
                         <Typography component="span" variant="body2" color="textPrimary">
@@ -1138,6 +1311,81 @@ const Chat = () => {
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setShowKnowledgeBase(false)}>关闭</Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* 编辑标题对话框 */}
+        <Dialog
+          open={showEditDialog}
+          onClose={() => setShowEditDialog(false)}
+          maxWidth="sm"
+          fullWidth
+        >
+          <DialogTitle>编辑会话标题</DialogTitle>
+          <DialogContent>
+            <TextField
+              autoFocus
+              margin="dense"
+              label="会话标题"
+              type="text"
+              fullWidth
+              variant="outlined"
+              value={editingTitle}
+              onChange={(e) => setEditingTitle(e.target.value)}
+              onKeyPress={(e) => {
+                if (e.key === 'Enter') {
+                  handleSaveTitle();
+                }
+              }}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setShowEditDialog(false)}>取消</Button>
+            <Button 
+              onClick={handleSaveTitle} 
+              variant="contained"
+              disabled={isLoading || !editingTitle.trim()}
+            >
+              {isLoading ? <CircularProgress size={20} /> : '保存'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* 文档重命名对话框 */}
+        <Dialog
+          open={showRenameDialog}
+          onClose={() => setShowRenameDialog(false)}
+          maxWidth="sm"
+          fullWidth
+        >
+          <DialogTitle>重命名文档</DialogTitle>
+          <DialogContent>
+            <TextField
+              autoFocus
+              margin="dense"
+              label="文档名称"
+              type="text"
+              fullWidth
+              variant="outlined"
+              value={editingDocumentName}
+              onChange={(e) => setEditingDocumentName(e.target.value)}
+              onKeyPress={(e) => {
+                if (e.key === 'Enter') {
+                  handleSaveDocumentName();
+                }
+              }}
+              helperText="请输入新的文档名称（不超过100个字符）"
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setShowRenameDialog(false)}>取消</Button>
+            <Button 
+              onClick={handleSaveDocumentName} 
+              variant="contained"
+              disabled={isLoading || !editingDocumentName.trim()}
+            >
+              {isLoading ? <CircularProgress size={20} /> : '保存'}
+            </Button>
           </DialogActions>
         </Dialog>
 

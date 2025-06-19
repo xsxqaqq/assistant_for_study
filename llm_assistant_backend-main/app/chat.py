@@ -8,9 +8,9 @@ import uuid
 from dotenv import load_dotenv
 from typing import Dict, List
 
-from app.schemas import ChatRequest, ChatResponse, ChatHistoryRequest, ChatHistoryResponse, AgentListResponse, AgentInfo, GetChatHistoryResponse, ChatMessage, ConversationListResponse, ConversationInfo # 新增导入
+from app.schemas import ChatRequest, ChatResponse, ChatHistoryRequest, ChatHistoryResponse, AgentListResponse, AgentInfo, GetChatHistoryResponse, ChatMessage, ConversationListResponse, ConversationInfo, ConversationTitleUpdateRequest, ConversationTitleUpdateResponse # 新增导入
 from app.auth import get_current_user, get_db
-from app.models import User, ChatHistory # 新增导入
+from app.models import User, ChatHistory, Conversation # 新增导入
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -45,11 +45,11 @@ AGENT_PROMPTS = {
         "name": "默认助手",
         "description": "友好专业的教学助手",
         "prompt": (
-    "【严格遵守】你已经获得了用户与助教的全部历史对话内容，用户所说的“之前的对话内容”即为已拼接在前文的历史。"
-    "无论用户如何提问，都不得回答“无法访问历史”或“无法看到历史”、“无法查看之前的对话记录”等内容。"
-    "你的任务是充分利用这些历史对话，耐心、细致、专业地回答问题，永远不要说你无法访问或看不到历史记录。"
-    "你是友好、专业的教学助理。请严格按照上述要求作答。"
-)
+            "【严格遵守】你已经获得了用户与助教的全部历史对话内容，用户所说的‘之前的对话内容’即为已拼接在前文的历史。"
+            "无论用户如何提问，都不得回答‘无法访问历史’或‘无法看到历史’、‘无法查看之前的对话记录’等内容。"
+            "你的任务是充分利用这些历史对话，耐心、细致、专业地回答问题，永远不要说你无法访问或看不到历史记录。"
+            "你是友好、专业的教学助理。请严格按照上述要求作答。"
+        )
     },
     "cool_scholar": {
         "name": "高冷学霸",
@@ -103,6 +103,23 @@ async def chat_endpoint(
         # 获取或创建对话ID
         conversation_id = body.conversation_id or str(uuid.uuid4())
         agent_type = body.agent_type or "default"
+        
+        # 如果是新对话，创建会话记录
+        if not body.conversation_id:
+            # 检查会话是否已存在
+            existing_conversation = db.query(Conversation).filter(
+                Conversation.id == conversation_id,
+                Conversation.user_id == current_user.id
+            ).first()
+            
+            if not existing_conversation:
+                # 创建新的会话记录
+                conversation_record = Conversation(
+                    id=conversation_id,
+                    user_id=current_user.id,
+                    title=""  # 初始为空，后续可以更新
+                )
+                db.add(conversation_record)
         
         # 从数据库加载历史记录
         history_from_db = db.query(ChatHistory).filter(
@@ -204,20 +221,41 @@ async def get_user_conversations(
     """
     logger.info(f"用户 {current_user.username} 请求其所有会话列表")
     
-    # 查询用户的所有会话，获取每个会话的第一条消息作为标题
+    # 首先获取所有会话记录
+    conversations_from_db = db.query(Conversation).filter(
+        Conversation.user_id == current_user.id
+    ).all()
+    
+    # 查询用户的所有会话，获取每个会话的第一条消息作为默认标题
     query_result = db.query(ChatHistory.conversation_id, ChatHistory.message)\
         .filter(ChatHistory.user_id == current_user.id, ChatHistory.role == "user")\
         .order_by(ChatHistory.conversation_id, ChatHistory.id)\
         .all()
     
-    # 按会话ID分组，取每个会话的第一条用户消息作为标题
-    conversations_dict = {}
+    # 按会话ID分组，取每个会话的第一条用户消息作为默认标题
+    default_titles = {}
     for conversation_id, message in query_result:
+        if conversation_id not in default_titles:
+            default_titles[conversation_id] = message[:50] + "..." if len(message) > 50 else message
+    
+    # 构建会话列表，优先使用自定义标题
+    conversations_dict = {}
+    for conv in conversations_from_db:
+        # 使用自定义标题，如果没有则使用默认标题
+        title = conv.title if conv.title else default_titles.get(conv.id, "新对话")
+        conversations_dict[conv.id] = {
+            "id": conv.id,
+            "title": title,
+            "created_at": conv.created_at.isoformat() if conv.created_at else None
+        }
+    
+    # 对于没有会话记录但有聊天记录的对话，也添加到列表中
+    for conversation_id, default_title in default_titles.items():
         if conversation_id not in conversations_dict:
             conversations_dict[conversation_id] = {
                 "id": conversation_id,
-                "title": message[:50] + "..." if len(message) > 50 else message,  # 限制标题长度
-                "created_at": None  # 暂时设置为None，因为模型中没有created_at字段
+                "title": default_title,
+                "created_at": None
             }
     
     conversations = [ConversationInfo(**conv_info) for conv_info in conversations_dict.values()]
@@ -243,7 +281,13 @@ async def delete_conversation_endpoint(
         ChatHistory.user_id == current_user.id
     ).all()
 
-    if not records_to_delete:
+    # 检查会话记录是否存在
+    conversation_to_delete = db.query(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.user_id == current_user.id
+    ).first()
+
+    if not records_to_delete and not conversation_to_delete:
         # 如果没有找到记录，或者记录不属于当前用户，可以返回404或403
         # 为了简单起见，如果记录为空，直接返回成功，因为结果都是该会话不再存在
         logger.info(f"未找到会话 {conversation_id} 或该会话不属于用户 {current_user.username}")
@@ -251,8 +295,14 @@ async def delete_conversation_endpoint(
         return # 返回 204 No Content
 
     try:
+        # 删除聊天记录
         for record in records_to_delete:
             db.delete(record)
+        
+        # 删除会话记录
+        if conversation_to_delete:
+            db.delete(conversation_to_delete)
+            
         db.commit()
         logger.info(f"用户 {current_user.username} 成功删除了会话 {conversation_id} 的所有记录")
         return # FastAPI 会自动处理 status_code=204 的响应体
@@ -266,24 +316,68 @@ async def delete_conversation_endpoint(
 async def get_agents_endpoint():
     """
     获取所有可用的助教角色列表
-    
-    返回所有配置的角色信息，包括角色ID、名称和描述
-    
-    无需用户认证
     """
-    logger.info("获取助教角色列表")
+    logger.info("请求获取助教角色列表")
+    
+    agents = [
+        AgentInfo(id=agent_id, name=config["name"], description=config["description"])
+        for agent_id, config in AGENT_PROMPTS.items()
+    ]
+    
+    return AgentListResponse(agents=agents)
+
+@router.put("/conversations/{conversation_id}/title", response_model=ConversationTitleUpdateResponse)
+async def update_conversation_title(
+    conversation_id: str,
+    request: ConversationTitleUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    更新指定会话的标题
+    需要用户认证，且只能更新自己的会话标题
+    """
+    logger.info(f"用户 {current_user.username} 请求更新会话 {conversation_id} 的标题为: {request.title}")
     
     try:
-        agents = []
-        for agent_id, agent_config in AGENT_PROMPTS.items():
-            agents.append(AgentInfo(
-                id=agent_id,
-                name=agent_config["name"],
-                description=agent_config["description"]
-            ))
+        # 检查会话是否存在且属于当前用户
+        conversation = db.query(Conversation).filter(
+            Conversation.id == conversation_id,
+            Conversation.user_id == current_user.id
+        ).first()
         
-        logger.info(f"返回 {len(agents)} 个角色")
-        return AgentListResponse(agents=agents)
+        if not conversation:
+            # 如果会话记录不存在，检查是否有聊天记录
+            chat_exists = db.query(ChatHistory).filter(
+                ChatHistory.conversation_id == conversation_id,
+                ChatHistory.user_id == current_user.id
+            ).first()
+            
+            if not chat_exists:
+                raise HTTPException(status_code=404, detail="会话不存在或您没有权限访问")
+            
+            # 创建新的会话记录
+            conversation = Conversation(
+                id=conversation_id,
+                user_id=current_user.id,
+                title=request.title
+            )
+            db.add(conversation)
+        else:
+            # 更新现有会话的标题
+            conversation.title = request.title
+        
+        db.commit()
+        logger.info(f"会话 {conversation_id} 的标题已更新为: {request.title}")
+        
+        return ConversationTitleUpdateResponse(
+            conversation_id=conversation_id,
+            title=request.title
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"获取角色列表失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"获取角色列表失败: {str(e)}")
+        logger.error(f"更新会话标题失败: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"更新会话标题失败: {str(e)}")

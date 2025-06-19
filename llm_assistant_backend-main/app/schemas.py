@@ -112,6 +112,17 @@ class ConversationInfo(BaseModel):
     title: str  # 对话的第一条消息
     created_at: Optional[str] = None
 
+# 新增：会话标题更新请求模型
+class ConversationTitleUpdateRequest(BaseModel):
+    title: str
+
+# 新增：会话标题更新响应模型
+class ConversationTitleUpdateResponse(BaseModel):
+    conversation_id: str
+    title: str
+    status_code: int = 200
+    message: str = "标题更新成功"
+
 class ConversationListResponse(BaseModel):
     conversations: List[ConversationInfo]
     status_code: int = 200
@@ -152,6 +163,8 @@ class RAGQueryRequest(BaseModel):
     question: str
     top_k: Optional[int] = 3
     use_cache: Optional[bool] = True
+    conversation_id: Optional[str] = None
+    agent_type: Optional[str] = "rag"
 
 class RAGQueryResponse(BaseModel):
     answer: str
@@ -161,6 +174,7 @@ class RAGQueryResponse(BaseModel):
     processing_time: Optional[float] = None
     cache_hit: Optional[bool] = False
     vector_info: Optional[Dict[str, Any]] = None  # 存储向量数据库相关信息
+    conversation_id: Optional[str] = None  # 返回会话ID
 
 class TaskStatusResponse(BaseModel):
     status: str

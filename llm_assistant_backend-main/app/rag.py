@@ -24,7 +24,7 @@ import httpx
 from docx import Document
 
 from app.auth import get_current_user, get_db
-from app.models import User, KnowledgeDocument, Base
+from app.models import User, KnowledgeDocument, Base, Conversation, ChatHistory
 from app.schemas import (
     DocumentUploadResponse,
     DocumentListResponse,
@@ -1016,6 +1016,27 @@ async def query_knowledge_base(
     try:
         logger.info(f"开始处理查询请求: {request.question}")
         
+        # 获取或创建对话ID
+        conversation_id = request.conversation_id or str(uuid.uuid4())
+        agent_type = request.agent_type or "default"
+        
+        # 如果是新对话，创建会话记录
+        if not request.conversation_id:
+            # 检查会话是否已存在
+            existing_conversation = db.query(Conversation).filter(
+                Conversation.id == conversation_id,
+                Conversation.user_id == current_user.id
+            ).first()
+            
+            if not existing_conversation:
+                # 创建新的会话记录
+                conversation_record = Conversation(
+                    id=conversation_id,
+                    user_id=current_user.id,
+                    title=""  # 初始为空，后续可以更新
+                )
+                db.add(conversation_record)
+        
         # 检查向量数据库状态，如果为空则尝试加载
         if vector_db is None or vector_db.ntotal == 0:
             logger.info("向量数据库为空，尝试加载")
@@ -1040,6 +1061,8 @@ async def query_knowledge_base(
             if cached_result:
                 logger.info("使用缓存结果")
                 update_metrics(start_time, cache_hit=True)
+                # 即使使用缓存，也要保存聊天记录
+                await save_chat_history(db, current_user.id, conversation_id, request.question, cached_result.answer, agent_type)
                 return cached_result
             
             # 使用混合检索
@@ -1117,8 +1140,12 @@ async def query_knowledge_base(
                 relevant_chunks=relevant_chunks,
                 status_code=200,
                 message="成功",
-                vector_info=vector_info
+                vector_info=vector_info,
+                conversation_id=conversation_id  # 返回会话ID
             )
+            
+            # 保存聊天记录
+            await save_chat_history(db, current_user.id, conversation_id, request.question, answer, agent_type)
             
             # 缓存结果
             if relevant_chunks:  # 只在有相关文档时缓存
@@ -1139,6 +1166,35 @@ async def query_knowledge_base(
         import traceback
         logger.error(f"错误堆栈: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"知识库查询失败: {str(e)}")
+
+async def save_chat_history(db: Session, user_id: int, conversation_id: str, question: str, answer: str, agent_type: str):
+    """保存聊天记录到数据库"""
+    try:
+        # 存储用户消息到数据库
+        user_message_record = ChatHistory(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            role="user",
+            message=question,
+            agent_type=agent_type
+        )
+        db.add(user_message_record)
+        
+        # 存储AI回复到数据库
+        ai_reply_record = ChatHistory(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            role="assistant",
+            message=answer,
+            agent_type=agent_type
+        )
+        db.add(ai_reply_record)
+        db.commit()
+        logger.info(f"已保存RAG对话记录，会话ID: {conversation_id}")
+    except Exception as e:
+        logger.error(f"保存RAG对话记录失败: {str(e)}")
+        db.rollback()
+        # 不抛出异常，避免影响主要功能
 
 @router.get("/tasks/{task_id}/status", response_model=TaskStatusResponse)
 async def get_task_status(
