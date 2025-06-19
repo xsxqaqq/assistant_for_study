@@ -24,6 +24,7 @@ import {
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import BuildIcon from '@mui/icons-material/Build';
 import type { AdminDocument } from '../types';
 
 const KnowledgeBaseAdmin = () => {
@@ -36,6 +37,8 @@ const KnowledgeBaseAdmin = () => {
   const [editingDocumentId, setEditingDocumentId] = useState<string>('');
   const [editingDocumentName, setEditingDocumentName] = useState<string>('');
   const [showRenameDialog, setShowRenameDialog] = useState(false);
+
+  const [repairing, setRepairing] = useState(false);
 
   const fetchDocuments = async () => {
     setLoading(true);
@@ -141,6 +144,34 @@ const KnowledgeBaseAdmin = () => {
     }
   };
 
+  const handleRepairVectorDB = async () => {
+    setRepairing(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        throw new Error('请先登录');
+      }
+      const response = await fetch('/api/rag/admin/repair_vector_db', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || '修复向量数据库失败');
+      }
+      setSuccess('向量数据库修复成功');
+      fetchDocuments();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '修复向量数据库失败');
+    } finally {
+      setRepairing(false);
+    }
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'processed':
@@ -173,14 +204,25 @@ const KnowledgeBaseAdmin = () => {
         <Typography variant="h5" component="h1">
           知识库管理
         </Typography>
-        <Button
-          variant="outlined"
-          startIcon={<RefreshIcon />}
-          onClick={fetchDocuments}
-          disabled={loading}
-        >
-          刷新
-        </Button>
+        <Box sx={{ display: 'flex', gap: 2 }}>
+          <Button
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={fetchDocuments}
+            disabled={loading || repairing}
+          >
+            刷新
+          </Button>
+          <Button
+            variant="contained"
+            color="secondary"
+            startIcon={<BuildIcon />}
+            onClick={handleRepairVectorDB}
+            disabled={repairing || loading}
+          >
+            {repairing ? '修复中...' : '修复向量数据库映射'}
+          </Button>
+        </Box>
       </Box>
 
       {error && (
