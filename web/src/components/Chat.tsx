@@ -596,7 +596,7 @@ const Chat = () => {
         }
         setSelectedFile(file)
       } else {
-        alert('请上传txt、pdf、docx或md文件')
+        alert('请上传txt、pdf文件')
       }
     }
   }
@@ -618,13 +618,19 @@ const Chat = () => {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`
-        },
-        body: formData
+        },        body: formData
       })
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.detail || `服务器错误 (${response.status})`)
+        let errorMessage = errorData.detail || `服务器错误 (${response.status})`
+        
+        // 针对文件类型错误提供更友好的提示
+        if (errorMessage.includes('仅支持txt和pdf文件') || errorMessage.includes('文件格式')) {
+          errorMessage = '不支持的文件格式！请上传 TXT 或 PDF 文件'
+        }
+        
+        throw new Error(errorMessage)
       }
 
       const data = await response.json()
@@ -1086,11 +1092,10 @@ const Chat = () => {
                                   {drawerOpen ? <CloseIcon /> : <MenuIcon />}
                               </IconButton>
                           )}
-                      </Box>
-                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      </Box>                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                           <input
                           type="file"
-                          accept=".txt,.pdf,.docx,.md"
+                          accept=".txt,.pdf"
                           onChange={handleFileSelect}
                           style={{ display: 'none' }}
                           ref={fileInputRef}
@@ -1102,7 +1107,10 @@ const Chat = () => {
                           fullWidth
                           >
                           {selectedFile ? selectedFile.name : '上传讲义文件'}
-                          </Button>                          {selectedFile && (
+                          </Button>
+                          <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: '0.8rem' }}>
+                              支持文件格式：TXT、PDF
+                          </Typography>{selectedFile && (
                               <>
                                   <Typography variant="body2" sx={{ mt: 1, color: 'text.secondary' }}>
                                       已选择: {selectedFile.name} ({formatFileSize(selectedFile.size)})

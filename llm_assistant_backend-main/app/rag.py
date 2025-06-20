@@ -1087,8 +1087,8 @@ async def query_knowledge_base(
                 relevant_chunks = []
                 for idx in I[0]:
                     idx_int = int(idx)  # 将 np.int64 转换为普通整数
-                    logger.info(f"检查索引 {idx_int} 是否在 document_chunks 中: {idx_int in document_chunks}")
-                    if idx_int in document_chunks:
+                    doc_id = vector_index_to_doc_id.get(idx_int)
+                    if doc_id in set(doc.id for doc in db.query(KnowledgeDocument).filter(KnowledgeDocument.user_id == current_user.id)):
                         chunk = document_chunks[idx_int]
                         logger.info(f"找到文档块: {chunk[:100]}...")
                         relevant_chunks.append(chunk)
