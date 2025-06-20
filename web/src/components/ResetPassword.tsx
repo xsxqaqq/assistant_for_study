@@ -13,16 +13,17 @@ import { useNavigate } from 'react-router-dom';
 
 const ResetPassword = () => {
   const [email, setEmail] = useState('');
-  const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-  const navigate = useNavigate();
-
-  const handleResetPassword = async (e: React.FormEvent) => {
+  const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error' | 'email-not-found'>('idle');
+  const [errorMessage, setErrorMessage] = useState('');
+  const navigate = useNavigate();  const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email) return;
     
     setStatus('loading');
+    setErrorMessage('');
+    
     try {
-      const response = await fetch('/api/reset-password', {
+      const response = await fetch('/api/auth/reset-password', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -30,17 +31,26 @@ const ResetPassword = () => {
         body: JSON.stringify({ email }),
       });
 
+      const data = await response.json();
+
       if (response.ok) {
         setStatus('success');
         setTimeout(() => {
           navigate('/login');
         }, 2000);
       } else {
-        setStatus('error');
+        if (response.status === 404 || data.detail?.includes('邮箱') || data.detail?.includes('不存在')) {
+          setStatus('email-not-found');
+          setErrorMessage('该邮箱尚未注册，请先注册账号');
+        } else {
+          setStatus('error');
+          setErrorMessage(data.detail || '发送失败，请稍后重试');
+        }
       }
     } catch (error) {
       console.error('重置密码错误:', error);
       setStatus('error');
+      setErrorMessage('网络错误，请稍后重试');
     }
   };
 
@@ -58,15 +68,19 @@ const ResetPassword = () => {
           <Typography component="h1" variant="h5" align="center" gutterBottom>
             找回密码
           </Typography>
-          <Box component="form" onSubmit={handleResetPassword} sx={{ mt: 1 }}>
-            {status === 'success' && (
+          <Box component="form" onSubmit={handleResetPassword} sx={{ mt: 1 }}>            {status === 'success' && (
               <Alert severity="success" sx={{ mb: 2 }}>
                 重置密码链接已发送到您的邮箱，请查收
               </Alert>
             )}
+            {status === 'email-not-found' && (
+              <Alert severity="warning" sx={{ mb: 2 }}>
+                {errorMessage}
+              </Alert>
+            )}
             {status === 'error' && (
               <Alert severity="error" sx={{ mb: 2 }}>
-                发送失败，请稍后重试
+                {errorMessage}
               </Alert>
             )}
             <TextField

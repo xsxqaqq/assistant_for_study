@@ -293,12 +293,11 @@ async def reset_password(request: PasswordResetRequest, db: Session = Depends(ge
     
     不需要认证
     """
-    try:
-        # 检查邮箱是否存在
+    try:        # 检查邮箱是否存在
         user = db.query(User).filter(User.email == request.email).first()
         if not user:
-            # 为了安全考虑，即使邮箱不存在也返回成功消息，避免暴露用户信息
-            return {"message": "如果该邮箱已注册，重置密码链接已发送到您的邮箱"}
+            # 明确返回邮箱不存在的错误
+            raise HTTPException(status_code=404, detail="该邮箱尚未注册，请先注册账号")
         
         # 生成重置令牌
         reset_token = create_access_token(

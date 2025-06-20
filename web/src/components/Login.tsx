@@ -15,7 +15,65 @@ import {
   Alert,
   ToggleButton,
   ToggleButtonGroup,
+  LinearProgress,
+  Chip,
+  IconButton,
+  Tooltip,
 } from '@mui/material';
+import {
+  Visibility,
+  VisibilityOff,
+  Security as SecurityIcon,
+} from '@mui/icons-material';
+
+// 密码强度评估函数
+const getPasswordStrength = (password: string): { score: number; text: string; color: 'error' | 'warning' | 'success' } => {
+  let score = 0
+  
+  if (password.length >= 8) score += 25
+  if (password.length >= 12) score += 15
+  if (/[a-z]/.test(password)) score += 15
+  if (/[A-Z]/.test(password)) score += 15
+  if (/[0-9]/.test(password)) score += 15
+  if (/[^A-Za-z0-9]/.test(password)) score += 15
+  
+  if (score < 40) return { score, text: '弱', color: 'error' }
+  if (score < 70) return { score, text: '中', color: 'warning' }
+  return { score, text: '强', color: 'success' }
+}
+
+// 生成简单数学验证码
+const generateMathCaptcha = (): { question: string; answer: number } => {
+  const a = Math.floor(Math.random() * 10) + 1
+  const b = Math.floor(Math.random() * 10) + 1
+  const operators = ['+', '-', '×']
+  const operator = operators[Math.floor(Math.random() * operators.length)]
+  
+  let answer: number
+  let question: string
+    switch (operator) {
+    case '+':
+      answer = a + b
+      question = `${a} + ${b} = ?`
+      break
+    case '-': {
+      const larger = Math.max(a, b)
+      const smaller = Math.min(a, b)
+      answer = larger - smaller
+      question = `${larger} - ${smaller} = ?`
+      break
+    }
+    case '×':
+      answer = a * b
+      question = `${a} × ${b} = ?`
+      break
+    default:
+      answer = a + b
+      question = `${a} + ${b} = ?`
+  }
+  
+  return { question, answer }
+}
 
 const Login = () => {
   const navigate = useNavigate();
@@ -211,11 +269,11 @@ const Login = () => {
               sx={{ mt: 3, mb: 2 }}
             >
               登录
-            </Button>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+            </Button>            <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
               <Link
                 component="button"
                 variant="body2"
+                type="button"
                 onClick={() => navigate('/register')}
               >
                 注册账号
@@ -223,6 +281,7 @@ const Login = () => {
               <Link
                 component="button"
                 variant="body2"
+                type="button"
                 onClick={() => setOpenResetDialog(true)}
               >
                 忘记密码？
@@ -269,4 +328,4 @@ const Login = () => {
   );
 };
 
-export default Login; 
+export default Login;

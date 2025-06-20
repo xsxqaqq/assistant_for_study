@@ -20,6 +20,9 @@ import {
   DialogContent,
   DialogActions,
   Tooltip,
+  LinearProgress,
+  Snackbar,
+  Chip,
 } from '@mui/material';
 import {
   Upload as UploadIcon,
@@ -28,6 +31,9 @@ import {
   Refresh as RefreshIcon,
   Info as InfoIcon,
   Pending as PendingIcon,
+  CheckCircle as CheckCircleIcon,
+  Error as ErrorIcon,
+  Retry as RetryIcon,
 } from '@mui/icons-material';
 import type { Document, DocumentUploadResponse, RAGQueryResponse, TaskStatusResponse } from '../types';
 
@@ -55,6 +61,41 @@ const KnowledgeBase: React.FC = () => {
   const [showMetrics, setShowMetrics] = useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [processingTasks, setProcessingTasks] = useState<Set<string>>(new Set());
+  const [snackbarOpen, setSnackbarOpen] = useState(false);
+  const [snackbarMessage, setSnackbarMessage] = useState('');
+  const [snackbarSeverity, setSnackbarSeverity] = useState<'success' | 'error'>('success');
+
+  // 新增状态：文件上传进度、格式验证、重试等
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [isRetrying, setIsRetrying] = useState(false)
+  const [fileFormatError, setFileFormatError] = useState<string | null>(null)
+  
+  // 支持的文件格式
+  const SUPPORTED_FORMATS = ['.pdf', '.txt', '.docx', '.md']
+  const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
+
+  // Toast 通知函数
+  const showToast = (message: string, severity: 'success' | 'error') => {
+    setSnackbarMessage(message)
+    setSnackbarSeverity(severity)
+    setSnackbarOpen(true)
+  }
+
+  // 文件格式验证
+  const validateFile = (file: File): string | null => {
+    const fileName = file.name.toLowerCase()
+    const isValidFormat = SUPPORTED_FORMATS.some(format => fileName.endsWith(format))
+    
+    if (!isValidFormat) {
+      return `不支持的文件格式。支持的格式：${SUPPORTED_FORMATS.join(', ')}`
+    }
+    
+    if (file.size > MAX_FILE_SIZE) {
+      return `文件大小超过限制（最大 ${MAX_FILE_SIZE / 1024 / 1024}MB）`
+    }
+    
+    return null
+  }
 
   // 获取文档列表
   const fetchDocuments = async () => {
@@ -138,19 +179,40 @@ const KnowledgeBase: React.FC = () => {
 
     return () => clearInterval(pollInterval);
   }, [processingTasks]);
-
   // 上传文档
   const handleUpload = async () => {
     if (!selectedFile) return;
 
+    // 文件格式验证
+    const formatError = validateFile(selectedFile)
+    if (formatError) {
+      setFileFormatError(formatError)
+      showToast(formatError, 'error')
+      return
+    } else {
+      setFileFormatError(null)
+    }
+
     setUploading(true);
     setError(null);
     setSuccess(null);
+    setUploadProgress(0)
 
     const formData = new FormData();
     formData.append('file', selectedFile);
 
     try {
+      // 模拟上传进度
+      const progressInterval = setInterval(() => {
+        setUploadProgress(prev => {
+          if (prev >= 90) {
+            clearInterval(progressInterval)
+            return 90
+          }
+          return prev + 10
+        })
+      }, 200)
+
       const response = await fetch('/api/rag/documents/upload', {
         method: 'POST',
         headers: {
@@ -159,13 +221,16 @@ const KnowledgeBase: React.FC = () => {
         body: formData
       });
 
+      clearInterval(progressInterval)
+      setUploadProgress(100)
+
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.detail || '文档上传失败');
       }
 
       const data: DocumentUploadResponse = await response.json();
-      setSuccess('文档上传成功，正在处理中...');
+      showToast('文档上传成功，正在处理中...', 'success')
       setSelectedFile(null);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
@@ -178,9 +243,12 @@ const KnowledgeBase: React.FC = () => {
         fetchDocuments();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '文档上传失败');
+      const errorMessage = err instanceof Error ? err.message : '文档上传失败'
+      setError(errorMessage);
+      showToast(errorMessage, 'error')
     } finally {
       setUploading(false);
+      setTimeout(() => setUploadProgress(0), 1000) // 延迟重置进度条
     }
   };
 
@@ -260,26 +328,41 @@ const KnowledgeBase: React.FC = () => {
       setLoading(false);
     }
   };
-
   // 文件选择处理
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
-      if (file.type === 'text/plain' || 
-          file.type === 'application/pdf' || 
-          file.name.endsWith('.docx') ||
-          file.name.endsWith('.md')) {
-        const maxSize = 10 * 1024 * 1024; // 10MB
-        if (file.size > maxSize) {
-          setError('文件大小不能超过10MB');
-          return;
-        }
-        setSelectedFile(file);
-      } else {
-        setError('请上传txt、pdf、docx或md文件');
+      // 清除之前的错误信息
+      setFileFormatError(null)
+      setError(null)
+      
+      // 验证文件格式
+      const validationError = validateFile(file)
+      if (validationError) {
+        setFileFormatError(validationError)
+        showToast(validationError, 'error')
+        return
       }
+      
+      setSelectedFile(file)
+      showToast(`已选择文件：${file.name}`, 'success')
     }
   };
+
+  // 重试上传函数
+  const handleRetry = async () => {
+    if (!selectedFile) return
+    
+    setIsRetrying(true)
+    try {
+      await handleUpload()
+      showToast('重试上传成功', 'success')
+    } catch (error) {
+      showToast('重试失败，请检查网络连接', 'error')
+    } finally {
+      setIsRetrying(false)
+    }
+  }
 
   // 渲染文档列表
   const renderDocumentList = () => (
@@ -384,8 +467,7 @@ const KnowledgeBase: React.FC = () => {
           <Paper sx={{ p: 3, mb: 3 }}>
             <Typography variant="h6" gutterBottom>
               文档管理
-            </Typography>
-            <Box sx={{ mb: 3 }}>
+            </Typography>            <Box sx={{ mb: 3 }}>
               <input
                 type="file"
                 accept=".txt,.pdf,.docx,.md"
@@ -393,27 +475,90 @@ const KnowledgeBase: React.FC = () => {
                 style={{ display: 'none' }}
                 ref={fileInputRef}
               />
-              <Button
-                variant="contained"
-                startIcon={<UploadIcon />}
-                onClick={() => fileInputRef.current?.click()}
-                sx={{ mr: 2 }}
-              >
-                选择文件
-              </Button>
-              {selectedFile && (
-                <Button
-                  variant="contained"
-                  color="primary"
-                  onClick={() => handleUpload()}
-                  disabled={uploading}
-                >
-                  {uploading ? <CircularProgress size={24} /> : '上传'}
-                </Button>
-              )}
-              {selectedFile && (
-                <Typography variant="body2" sx={{ mt: 1 }}>
-                  已选择: {selectedFile.name}
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <Button
+                    variant="contained"
+                    startIcon={<UploadIcon />}
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploading}
+                  >
+                    选择文件
+                  </Button>
+                  {selectedFile && (
+                    <Button
+                      variant="contained"
+                      color="primary"
+                      onClick={() => handleUpload()}
+                      disabled={uploading}
+                    >
+                      {uploading ? <CircularProgress size={24} /> : '上传'}
+                    </Button>
+                  )}
+                  {error && selectedFile && (
+                    <Button
+                      variant="outlined"
+                      color="warning"
+                      startIcon={<RetryIcon />}
+                      onClick={handleRetry}
+                      disabled={isRetrying}
+                      size="small"
+                    >
+                      {isRetrying ? '重试中...' : '重试'}
+                    </Button>
+                  )}
+                </Box>
+                
+                {/* 文件格式错误提示 */}
+                {fileFormatError && (
+                  <Alert severity="error" sx={{ mt: 1 }}>
+                    {fileFormatError}
+                  </Alert>
+                )}
+                
+                {/* 选中文件信息 */}
+                {selectedFile && (
+                  <Card variant="outlined" sx={{ p: 2 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                      <CheckCircleIcon color="success" fontSize="small" />
+                      <Typography variant="body2" fontWeight="medium">
+                        {selectedFile.name}
+                      </Typography>
+                      <Chip 
+                        size="small" 
+                        label={`${(selectedFile.size / 1024 / 1024).toFixed(2)} MB`}
+                        color="primary"
+                        variant="outlined"
+                      />
+                    </Box>
+                    <Typography variant="caption" color="text.secondary">
+                      支持格式：{SUPPORTED_FORMATS.join(', ')} (最大 {MAX_FILE_SIZE / 1024 / 1024}MB)
+                    </Typography>
+                  </Card>
+                )}
+                
+                {/* 上传进度条 */}
+                {uploading && uploadProgress > 0 && (
+                  <Box sx={{ mt: 2 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                      <Typography variant="body2" sx={{ minWidth: 35 }}>
+                        {uploadProgress}%
+                      </Typography>
+                      <LinearProgress 
+                        variant="determinate" 
+                        value={uploadProgress} 
+                        sx={{ flex: 1, ml: 1 }}
+                      />
+                    </Box>
+                    <Typography variant="caption" color="text.secondary">
+                      正在上传文件，请稍候...
+                    </Typography>
+                  </Box>
+                )}
+              </Box>
+              {fileFormatError && (
+                <Typography variant="body2" color="error" sx={{ mt: 1 }}>
+                  {fileFormatError}
                 </Typography>
               )}
             </Box>
@@ -568,8 +713,25 @@ const KnowledgeBase: React.FC = () => {
           <Button onClick={() => setShowMetrics(false)}>关闭</Button>
         </DialogActions>
       </Dialog>
+
+      {/* Snackbar 通知 */}
+      <Snackbar
+        open={snackbarOpen}
+        autoHideDuration={6000}
+        onClose={() => setSnackbarOpen(false)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Chip
+          label={snackbarMessage}
+          onDelete={() => setSnackbarOpen(false)}
+          deleteIcon={<ErrorIcon />}
+          color={snackbarSeverity === 'success' ? 'primary' : 'secondary'}
+          variant="outlined"
+          sx={{ width: '100%' }}
+        />
+      </Snackbar>
     </Container>
   );
 };
 
-export default KnowledgeBase; 
+export default KnowledgeBase;

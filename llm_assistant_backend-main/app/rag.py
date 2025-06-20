@@ -1477,6 +1477,21 @@ def get_optimal_chunk_size(text_length: int) -> tuple:
         # 超长文档：使用最大块
         return 1500, 250
 
+# def split_text(text: str, chunk_size=512) -> List[str]:
+#     """按空行粗切，再把每段超长的进一步切块"""
+#     raw_chunks = text.split('\n\n')
+#     final_chunks = []
+#     for chunk in raw_chunks:
+#         chunk = chunk.strip()
+#         while len(chunk) > chunk_size:
+#             final_chunks.append(chunk[:chunk_size])
+#             chunk = chunk[chunk_size:]
+#         if chunk:
+#             final_chunks.append(chunk)
+#     logger.info(f"二次分割后将文本分割为 {len(final_chunks)} 个块")
+#     return final_chunks
+
+
 def split_text(text: str) -> List[str]:
     """将文本分割成块"""
     try:

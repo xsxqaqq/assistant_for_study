@@ -31,6 +31,9 @@ import {
   DialogActions,
   Alert,
   Switch,
+  Chip,
+  Fade,
+  Skeleton,
 } from '@mui/material'
 import {
   Send as SendIcon,
@@ -41,10 +44,26 @@ import {
   Upload as UploadIcon,
   Pending as PendingIcon,
   Edit as EditIcon,
+  CheckCircle as CheckCircleIcon,
+  Error as ErrorIcon,
+  Schedule as ScheduleIcon,
 } from '@mui/icons-material'
 import SummarizeIcon from '@mui/icons-material/Summarize'
 import CloseIcon from '@mui/icons-material/Close'
 import type { Message, Document, DocumentUploadResponse } from '../types'
+
+// 消息状态枚举
+enum MessageStatus {
+  SENDING = 'sending',
+  SENT = 'sent', 
+  FAILED = 'failed'
+}
+
+// 扩展Message类型以包含状态
+interface ExtendedMessage extends Message {
+  status?: MessageStatus
+  id?: string
+}
 
 interface Agent {
   id: string
@@ -68,9 +87,12 @@ interface ConversationInfo {
 
 const Chat = () => {
   const navigate = useNavigate()
-  const [messages, setMessages] = useState<Message[]>([])
+  const [messages, setMessages] = useState<ExtendedMessage[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [isThinking, setIsThinking] = useState(false)
+  const [currentTypingMessage, setCurrentTypingMessage] = useState<string>('')
+  const [typingMessageId, setTypingMessageId] = useState<string>('')
   const [dynamicAgents, setDynamicAgents] = useState<Agent[]>([])
   const [selectedAgent, setSelectedAgent] = useState<string>('default')
   const [showHistory, setShowHistory] = useState(false)
@@ -101,6 +123,97 @@ const Chat = () => {
   const [editingDocumentName, setEditingDocumentName] = useState<string>('')
   const [showRenameDialog, setShowRenameDialog] = useState(false)
 
+  // 打字机效果Hook
+  const useTypewriter = (text: string, speed: number = 50) => {
+    const [displayText, setDisplayText] = useState('')
+    const [currentIndex, setCurrentIndex] = useState(0)
+
+    useEffect(() => {
+      if (currentIndex < text.length) {
+        const timer = setTimeout(() => {
+          setDisplayText(prev => prev + text[currentIndex])
+          setCurrentIndex(prev => prev + 1)
+        }, speed)
+        return () => clearTimeout(timer)
+      }
+    }, [currentIndex, text, speed])
+
+    const resetTypewriter = () => {
+      setDisplayText('')
+      setCurrentIndex(0)
+    }
+
+    return { displayText, isComplete: currentIndex === text.length, resetTypewriter }
+  }
+
+  // AI思考组件
+  const AIThinkingIndicator = () => (
+    <Box sx={{ 
+      display: 'flex', 
+      alignItems: 'center', 
+      gap: 1, 
+      p: 2,
+      backgroundColor: '#f5f5f5',
+      borderRadius: 2,
+      mb: 1
+    }}>
+      <CircularProgress size={16} />
+      <Typography variant="body2" color="text.secondary">
+        AI正在思考...
+      </Typography>
+      <Box sx={{ display: 'flex', gap: 0.5 }}>
+        {[0, 1, 2].map((i) => (
+          <Box
+            key={i}
+            sx={{
+              width: 4,
+              height: 4,
+              borderRadius: '50%',
+              backgroundColor: 'primary.main',
+              animation: `blink 1.4s infinite ${i * 0.2}s`,
+              '@keyframes blink': {
+                '0%, 80%, 100%': { opacity: 0 },
+                '40%': { opacity: 1 }
+              }
+            }}
+          />
+        ))}
+    </Box>
+    </Box>
+  )
+
+  // 消息状态图标组件
+  const MessageStatusIcon = ({ status }: { status?: MessageStatus }) => {
+    switch (status) {
+      case MessageStatus.SENDING:
+        return <ScheduleIcon sx={{ fontSize: 14, color: 'warning.main' }} />
+      case MessageStatus.SENT:
+        return <CheckCircleIcon sx={{ fontSize: 14, color: 'success.main' }} />
+      case MessageStatus.FAILED:
+        return <ErrorIcon sx={{ fontSize: 14, color: 'error.main' }} />
+      default:
+        return null
+    }
+  }
+
+  // 格式化时间戳
+  const formatTimestamp = (timestamp: string | number) => {
+    const date = new Date(timestamp)
+    const now = new Date()
+    const diff = now.getTime() - date.getTime()
+    
+    if (diff < 60000) return '刚刚'
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟前`
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}小时前`
+    
+    return date.toLocaleString('zh-CN', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  }
+
   // 格式化文件大小显示
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) {
@@ -109,8 +222,7 @@ const Chat = () => {
       return `${(bytes / 1024).toFixed(2)} KB`
     } else {
       return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
-    }
-  }
+    }  }
 
   useEffect(() => {
     const fetchAgentsAndConversations = async () => {
@@ -192,19 +304,22 @@ const Chat = () => {
   useEffect(() => {
     scrollToBottom()
   }, [messages, isLoading])
-
   const handleSend = async () => {
     if (!input.trim()) return
 
-    const newMessage: Message = {
+    const messageId = Date.now().toString()
+    const newMessage: ExtendedMessage = {
       role: 'user',
       content: input,
       timestamp: new Date().toISOString(),
+      status: MessageStatus.SENDING,
+      id: messageId
     }
 
     setMessages(prev => [...prev, newMessage])
     setInput('')
     setIsLoading(true)
+    setIsThinking(true)
 
     try {
       const token = localStorage.getItem('token')
@@ -239,13 +354,19 @@ const Chat = () => {
         if (!currentConversationId.current && ragResponse.conversation_id) {
           currentConversationId.current = ragResponse.conversation_id
         }
-        
-        const assistantMessage: Message = {
+          // 更新用户消息状态为已发送
+        setMessages(prev => prev.map(msg => 
+          msg.id === messageId ? { ...msg, status: MessageStatus.SENT } : msg
+        ))
+
+        const assistantMessage: ExtendedMessage = {
           role: 'assistant',
           content: ragResponse.answer,
           timestamp: new Date().toISOString(),
-          rag_response: ragResponse
+          rag_response: ragResponse,
+          id: Date.now().toString()
         }
+          // 开始打字机效果
         setMessages(prev => [...prev, assistantMessage])
       } else {
         // 普通对话模式
@@ -274,18 +395,32 @@ const Chat = () => {
           currentConversationId.current = data.conversation_id
         }
 
-        const assistantMessage: Message = {
+        // 更新用户消息状态为已发送
+        setMessages(prev => prev.map(msg => 
+          msg.id === messageId ? { ...msg, status: MessageStatus.SENT } : msg
+        ))
+
+        const assistantMessage: ExtendedMessage = {
           role: 'assistant',
           content: data.reply,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          id: Date.now().toString()
         }
+          // 开始打字机效果
         setMessages(prev => [...prev, assistantMessage])
       }
     } catch (error) {
       console.error('发送消息失败:', error)
+      
+      // 更新用户消息状态为失败
+      setMessages(prev => prev.map(msg => 
+        msg.id === messageId ? { ...msg, status: MessageStatus.FAILED } : msg
+      ))
+      
       setError(error instanceof Error ? error.message : '发送消息失败')
     } finally {
       setIsLoading(false)
+      setIsThinking(false)
     }
   }
 
@@ -691,9 +826,7 @@ const Chat = () => {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const renderMessage = (message: Message) => {
+  };  const renderMessage = (message: ExtendedMessage) => {
     const isUser = message.role === 'user'
     const ragResponse = message.rag_response
     const hasRelevantChunks = ragResponse?.relevant_chunks && ragResponse.relevant_chunks.length > 0
@@ -705,7 +838,7 @@ const Chat = () => {
 
     return (
       <Box
-        key={message.timestamp}
+        key={message.id || message.timestamp}
         sx={{
           display: 'flex',
           justifyContent: isUser ? 'flex-end' : 'flex-start',
@@ -724,22 +857,45 @@ const Chat = () => {
               display: 'flex',
               alignItems: 'center',
               mb: 1,
+              justifyContent: isUser ? 'flex-end' : 'flex-start',
             }}
           >
-            <Avatar
-              sx={{
-                bgcolor: isUser ? 'primary.main' : 'secondary.main',
-                width: 32,
-                height: 32,
-                mr: 1,
-              }}
-            >
-              {isUser ? 'U' : 'A'}
-            </Avatar>
-            <Typography variant="subtitle2" color="text.secondary">
-              {isUser ? '你' : '助手'}
-            </Typography>
+            {!isUser && (
+              <Avatar
+                sx={{
+                  bgcolor: 'secondary.main',
+                  width: 32,
+                  height: 32,
+                  mr: 1,
+                }}
+              >
+                A
+              </Avatar>
+            )}            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: isUser ? 'flex-end' : 'flex-start' }}>
+              <Typography variant="subtitle2" color="text.secondary">
+                {isUser ? '你' : '助手'}
+              </Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
+                {formatTimestamp(message.timestamp)}
+              </Typography>
+            </Box>
+            {isUser && (
+              <>
+                <MessageStatusIcon status={message.status} />
+                <Avatar
+                  sx={{
+                    bgcolor: 'primary.main',
+                    width: 32,
+                    height: 32,
+                    ml: 1,
+                  }}
+                >
+                  U
+                </Avatar>
+              </>
+            )}
           </Box>
+          
           <Paper
             elevation={1}
             sx={{
@@ -747,10 +903,11 @@ const Chat = () => {
               bgcolor: isUser ? 'primary.light' : 'background.paper',
               color: isUser ? 'primary.contrastText' : 'text.primary',
               borderRadius: 2,
-              textAlign: 'left',   // <------ 添加这一行
+              textAlign: 'left',
+              position: 'relative',
             }}
           >
-            <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap',textAlign: 'left', }}>
+            <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap', textAlign: 'left' }}>
               {message.content}
             </Typography>
             
@@ -1006,8 +1163,7 @@ const Chat = () => {
           </Box>
         </Drawer>
 
-        {/* 主聊天区域 - 占据剩余空间 */}
-        <Box
+        {/* 主聊天区域 - 占据剩余空间 */}        <Box
           component="main"
           sx={{
             flexGrow: 1,
@@ -1018,25 +1174,20 @@ const Chat = () => {
             bgcolor: 'background.default',
             boxSizing: 'border-box',
             overflowY: 'auto',
-            p: { xs: 1, sm: 2, md: 3 },
+            p: 0,
           }}
-        >
-          <Box
+        >          <Box
             sx={{
               display: 'flex',
               flexDirection: 'column',
               flexGrow: 1,
               width: '100%',
-              maxWidth: {xs: '100%', md: '90vw' , lg: '95vw'},
-              // mx: 'auto',
+              height: '100%',
               bgcolor: 'background.paper',
-              borderRadius: 2,
-              boxShadow: 2,
               overflow: 'hidden',
-              p:{xs:1, sm:2, md:3},
+              p: { xs: 1, sm: 1.5, md: 2 },
             }}
-          >
-            <List
+          ><List
               sx={{
                 flex: 1,
                 overflowY: 'auto',
@@ -1046,8 +1197,11 @@ const Chat = () => {
                 gap: {xs:0.5, sm:1},
               }}
             >
-              {messages.map(renderMessage)}
-              {isLoading && (
+              {messages.map((message) => renderMessage(message))}
+              {isThinking && (
+                <AIThinkingIndicator />
+              )}
+              {isLoading && !isThinking && (
                 <Box sx={{ display: 'flex', justifyContent: 'center', my: 2 }}>
                   <CircularProgress size={24} />
                 </Box>

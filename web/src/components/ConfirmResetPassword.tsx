@@ -164,10 +164,9 @@ const ConfirmResetPassword = () => {
                     >
                       {showPassword ? <VisibilityOff /> : <Visibility />}
                     </IconButton>
-                  </InputAdornment>
-                ),
+                  </InputAdornment>                ),
               }}
-              helperText="密码长度至少为6位"
+              helperText="密码长度至少为8位"
             />
             
             <TextField
