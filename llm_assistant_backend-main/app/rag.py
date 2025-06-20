@@ -28,10 +28,13 @@ from app.models import User, KnowledgeDocument, Base, Conversation, ChatHistory
 from app.schemas import (
     DocumentUploadResponse,
     DocumentListResponse,
-    DocumentInfo,
+    AdminDocumentListResponse,
+    UserDocumentInfo,
+    AdminDocumentInfo,
     RAGQueryRequest,
     RAGQueryResponse,
-    TaskStatusResponse
+    TaskStatusResponse,
+    RenameDocumentRequest
 )
 
 # 配置日志
@@ -777,13 +780,13 @@ async def list_documents(
         documents = db.query(KnowledgeDocument).filter(
             KnowledgeDocument.user_id == current_user.id
         ).order_by(KnowledgeDocument.upload_time.desc()).all()
-        
         return DocumentListResponse(
             documents=[
-                DocumentInfo(
+                UserDocumentInfo(
                     id=doc.id,
                     filename=doc.filename,  # 使用系统生成的文件名
                     original_filename=doc.original_filename,  # 使用原始文件名
+                    custom_filename=doc.custom_filename,
                     upload_time=doc.upload_time,
                     status=doc.status,
                     chunk_count=doc.chunk_count
@@ -1427,7 +1430,7 @@ async def admin_delete_document(
             detail=f"删除文档失败: {str(e)}"
         )
 
-@router.get("/admin/documents", response_model=DocumentListResponse)
+@router.get("/admin/documents", response_model=AdminDocumentListResponse)
 async def admin_list_documents(
     current_user: User = Depends(get_current_admin),
     db: Session = Depends(get_db)
@@ -1435,19 +1438,23 @@ async def admin_list_documents(
     """获取所有知识库文档列表（仅管理员可用）"""
     try:
         documents = db.query(KnowledgeDocument).all()
-        return {
-            "documents": [
-                DocumentInfo(
+        return AdminDocumentListResponse(
+            documents=[
+                AdminDocumentInfo(
                     id=doc.id,
                     filename=doc.filename,
                     original_filename=doc.original_filename,
+                    custom_filename=doc.custom_filename,
                     upload_time=doc.upload_time,
                     status=doc.status,
-                    chunk_count=doc.chunk_count
+                    chunk_count=doc.chunk_count,
+                    user_id=doc.user_id,
+                    username=doc.user.username if doc.user else "",
+                    email=doc.user.email if doc.user else ""
                 )
                 for doc in documents
             ]
-        }
+        )
     except Exception as e:
         logger.error(f"获取文档列表失败: {str(e)}")
         raise HTTPException(
@@ -1712,3 +1719,19 @@ async def admin_repair_vector_db(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"修复向量数据库失败: {str(e)}"
         )
+
+@router.put("/documents/{document_id}/rename")
+async def rename_document(
+    document_id: str,
+    request: RenameDocumentRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    doc = db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    if doc.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="无权限修改该文档")
+    doc.custom_filename = request.custom_filename
+    db.commit()
+    return {"message": "重命名成功"}

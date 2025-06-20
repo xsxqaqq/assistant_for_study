@@ -9,13 +9,11 @@ import {
   Link,
   Alert,
 } from '@mui/material';
-import { useNavigate } from 'react-router-dom';
 
 const RequestPasswordReset = () => {
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState('');
-  const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -117,7 +115,7 @@ const RequestPasswordReset = () => {
               <Link href="/login" variant="body2" sx={{ mr: 2 }}>
                 返回登录
               </Link>
-              <span style={{ color: '#999' }}>|</span>
+              <Box component="span" sx={{ color: '#999' }}>|</Box>
               <Link href="/register" variant="body2" sx={{ ml: 2 }}>
                 注册新账户
               </Link>

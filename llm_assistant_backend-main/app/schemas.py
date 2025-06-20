@@ -142,16 +142,25 @@ class DashboardStatsResponse(BaseModel):
     status_code: int = 200
     message: str = "成功获取仪表盘数据"
 
-class DocumentInfo(BaseModel):
+class UserDocumentInfo(BaseModel):
     id: str
     filename: str
     original_filename: str
+    custom_filename: Optional[str] = None
     upload_time: datetime
     status: str
     chunk_count: int
 
+class AdminDocumentInfo(UserDocumentInfo):
+    user_id: int
+    username: str
+    email: str
+
 class DocumentListResponse(BaseModel):
-    documents: List[DocumentInfo]
+    documents: List[UserDocumentInfo]
+
+class AdminDocumentListResponse(BaseModel):
+    documents: List[AdminDocumentInfo]
 
 class DocumentUploadResponse(BaseModel):
     document_id: str
@@ -182,3 +191,6 @@ class TaskStatusResponse(BaseModel):
     filename: str
     progress: Optional[float] = None
     error: Optional[str] = None
+
+class RenameDocumentRequest(BaseModel):
+    custom_filename: str
